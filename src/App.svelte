@@ -1,14 +1,37 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
-	
-    import type {
-        Project,
-        Instance
-    }                   from './lib/types';
-    import InstanceCard from './components/InstanceCard.svelte';
+
+	import type {
+		Project,
+		Instance
+	}                   from './lib/types';
+	import InstanceCard from './components/InstanceCard.svelte';
 	import Console      from './components/Console.svelte';
 	import Sidebar      from './components/Sidebar.svelte';
+	import LogViewer    from './components/LogViewer.svelte';
+
+	// Detección de ventana secundaria de log viewer
+	const urlParams = new URLSearchParams( window.location.search );
+	const logViewerKey = urlParams.get( 'logViewerKey' );
+
+	interface LogViewerData {
+		instanceName : string;
+		logs         : string;
+	}
+
+	let logViewerData = $state<LogViewerData | null>( null );
+
+	if ( logViewerKey ) {
+		const raw = localStorage.getItem( logViewerKey );
+		if ( raw ) {
+			try {
+				logViewerData = JSON.parse( raw ) as LogViewerData;
+			} catch {
+				logViewerData = null;
+			}
+		}
+	}
 
 	let projects        = $state<Project[]>( [] );
 	let selectedProject = $state<Project | null>( null );
@@ -389,9 +412,22 @@
 		const inst = selectedProject.instances.find( ( i ) => i.id === activeLogInstanceId );
 		return inst ? inst.name : 'Ninguno';
 	}
+
+	function handleClearConsole() : void {
+		if ( activeLogInstanceId ) {
+			instanceLogs[ activeLogInstanceId ] = '';
+		}
+	}
 </script>
 
+{#if logViewerData}
+	<LogViewer
+		instanceName={ logViewerData.instanceName }
+		logs={ logViewerData.logs }
+	/>
+{:else}
 <main class="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 font-sans">
+
 	<!-- Toast Notification -->
 	{#if toastMessage}
 		<div class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
@@ -446,14 +482,17 @@
 				<!-- Registered Paths List -->
 				<div class="space-y-1 bg-slate-950/50 p-3 rounded-2xl border border-slate-800/80">
 					<span class="text-[10px] uppercase font-bold text-slate-500 tracking-wider block mb-1.5 select-none">Rutas Vinculadas</span>
-					{#each selectedProject.paths as path}
-						<div class="text-xs font-mono text-slate-400 truncate flex items-center gap-2 select-all">
-							<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-slate-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-							</svg>
-							{ path }
-						</div>
-					{/each}
+
+                    <div class="grid  grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 lg:gap-5">
+                        {#each selectedProject.paths as path}
+                            <div class="text-xs font-mono text-slate-400 truncate flex items-center gap-2 select-all">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-slate-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                                </svg>
+                                { path }
+                            </div>
+                        {/each}
+                    </div>
 				</div>
 			</header>
 
@@ -484,7 +523,7 @@
 								</button>
 							</div>
 
-							<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+							<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 lg:gap-5">
 								{#each instances as instance ( instance.id )}
 									<InstanceCard
 										{ instance }
@@ -558,6 +597,7 @@
 					{ activeLogInstanceId }
 					instanceName={ getActiveInstanceName() }
 					logs={ activeLogInstanceId ? ( instanceLogs[ activeLogInstanceId ] || '' ) : '' }
+					onClear={ handleClearConsole }
 				/>
 			</div>
 		{:else}
@@ -667,6 +707,7 @@
 		</div>
 	{/if}
 </main>
+{/if}
 
 <style>
 	@keyframes scaleUp {
@@ -681,5 +722,30 @@
 	}
 	:global(.animate-scale-up) {
 		animation: scaleUp 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+	}
+
+	:global( * ) {
+		scrollbar-width : thin;
+		scrollbar-color : #334155 transparent;
+	}
+
+	:global( *::-webkit-scrollbar ) {
+		width  : 5px;
+		height : 5px;
+	}
+
+	:global( *::-webkit-scrollbar-track ) {
+		background    : transparent;
+		border-radius : 9999px;
+	}
+
+	:global( *::-webkit-scrollbar-thumb ) {
+		background-color : #334155;
+		border-radius    : 9999px;
+		border           : 1px solid transparent;
+	}
+
+	:global( *::-webkit-scrollbar-thumb:hover ) {
+		background-color : #475569;
 	}
 </style>

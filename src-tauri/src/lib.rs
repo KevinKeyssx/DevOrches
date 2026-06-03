@@ -33,6 +33,7 @@ pub fn run() {
 			commands::project::get_projects,
 			commands::project::delete_project,
 			commands::project::select_directory,
+			commands::project::save_log_file,
 			commands::project::add_project_path,
 			commands::project::delete_project_instance,
 			commands::project::start_instance,

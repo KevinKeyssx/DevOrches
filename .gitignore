@@ -1,0 +1,36 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencias y Compilación Frontend
+node_modules
+dist
+dist-ssr
+
+# Tauri / Rust (Especificando rutas relativas a la raíz)
+/src-tauri/target/
+/src-tauri/gen/apple/
+/src-tauri/gen/android/
+/src-tauri/gen/schemas/
+/src-tauri/.tauri/
+
+# Variables de Entorno (Secretos)
+.env
+.env.*
+!.env.example
+
+# Directorios y archivos de editores / IDEs
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

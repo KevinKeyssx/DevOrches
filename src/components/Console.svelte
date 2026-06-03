@@ -1,28 +1,75 @@
 <script lang="ts">
-	import { Terminal } from 'xterm';
-	import { FitAddon } from 'xterm-addon-fit';
 	import 'xterm/css/xterm.css';
+	import { Terminal }      from 'xterm';
+	import { FitAddon }      from 'xterm-addon-fit';
+	import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+	import ConsoleActions    from './ConsoleActions.svelte';
+
 
 	interface Props {
 		activeLogInstanceId : string | null;
 		instanceName        : string;
 		logs                : string;
+		onClear?            : () => void;
 	}
+
 
 	let {
 		activeLogInstanceId,
 		instanceName,
-		logs
+		logs,
+		onClear
 	}: Props = $props();
 
 	let terminalContainer = $state<HTMLDivElement | null>( null );
+
 	let terminal: Terminal | null = null;
 	let fitAddon: FitAddon | null = null;
-
 	let lastWrittenLength = 0;
 	let currentInstanceId = '';
 
-	$effect( () => {
+
+	function clearConsole() : void {
+		if ( onClear ) {
+			onClear();
+		} else {
+			if ( terminal ) {
+				terminal.reset();
+				lastWrittenLength = 0;
+			}
+		}
+	}
+
+
+	function openInNewWindow() : void {
+		if ( !logs ) return;
+
+		const key = `log_viewer_${ Date.now() }`;
+
+		localStorage.setItem( key, JSON.stringify( {
+			instanceName,
+			logs,
+		} ) );
+
+		const webview = new WebviewWindow( key, {
+			url       : `/?logViewerKey=${ key }`,
+			title     : `Logs — ${ instanceName }`,
+			width     : 900,
+			height    : 640,
+			resizable : true,
+			center    : true,
+			focus     : true,
+		} );
+
+		webview.once( 'tauri://error', ( ( e ) => {
+			console.error( 'Error al abrir ventana de logs:', e );
+			localStorage.removeItem( key );
+		} ) );
+	}
+
+
+
+    $effect( () => {
 		if ( !terminalContainer ) return;
 
 		terminal = new Terminal( {
@@ -115,10 +162,31 @@
 				Consola de Logs Unificada: <span class="text-violet-400 font-bold">{ instanceName }</span>
 			</span>
 		</div>
-		<div class="text-[10px] text-slate-600 font-mono">terminal</div>
+		<div class="flex items-center gap-1">
+			<ConsoleActions
+				logs={ logs }
+				instanceName={ instanceName }
+				disabled={ !activeLogInstanceId }
+				onClear={ clearConsole }
+			/>
+
+			<!-- Button 3: Abrir en nueva ventana -->
+			<button
+				onclick={ openInNewWindow }
+				disabled={ !activeLogInstanceId || !logs }
+				class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800/80 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-slate-400"
+				title="Abrir logs en nueva pestaña"
+			>
+				<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+				</svg>
+			</button>
+
+			<span class="text-[10px] text-slate-600 font-mono ml-2">terminal</span>
+		</div>
 	</div>
 	<div
 		bind:this={ terminalContainer }
-		class="flex-1 bg-slate-950 p-4 overflow-hidden"
+		class="w-full h-full bg-[#0b0f19] p-4 overflow-hidden"
 	></div>
 </div>

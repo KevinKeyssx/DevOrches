@@ -48,6 +48,32 @@ pub async fn select_directory( app: tauri::AppHandle ) -> Result<Option<String>,
 	Ok( folder )
 }
 
+#[tauri::command]
+pub async fn save_log_file(
+	app          : tauri::AppHandle,
+	default_name : String,
+	content      : String,
+) -> Result<bool, String> {
+	let file_path = app.dialog()
+		.file()
+		.add_filter( "Log files", &[ "log", "txt" ] )
+		.set_file_name( &default_name )
+		.blocking_save_file();
+
+	match file_path {
+		Some( path ) => {
+			let path_buf = path.into_path()
+				.map_err( | e | format!( "Error al obtener la ruta: {}", e ) )?;
+
+			std::fs::write( &path_buf, content.as_bytes() )
+				.map_err( | e | format!( "Error al escribir el archivo: {}", e ) )?;
+
+			Ok( true )
+		}
+		None => Ok( false ),
+	}
+}
+
 pub async fn detect_path_instances( path: &str ) -> Result<Vec<Instance>, String> {
 	let project_path = Path::new( path );
 	if !project_path.exists() {

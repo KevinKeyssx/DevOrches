@@ -119,6 +119,12 @@ pub fn run() {
 			commands::project::stop_instance,
 			commands::project::update_instance,
 			commands::project::add_manual_instance,
+			commands::project::load_workflow,
+			commands::project::save_workflow,
+			commands::project::export_workflow,
+			commands::project::import_workflow,
+			commands::project::run_workflow,
+			commands::project::abort_workflow,
 		] )
 		.run( tauri::generate_context!() )
 		.expect( "error while running tauri application" );

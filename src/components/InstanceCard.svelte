@@ -8,6 +8,7 @@
 		instance            : Instance;
 		activeLogInstanceId : string | null;
 		isRunning           : boolean;
+		isWorkflowRunning   : boolean;
 		stats               : {
 			cpu          : number;
 			memory       : number;
@@ -25,6 +26,7 @@
 		instance,
 		activeLogInstanceId,
 		isRunning,
+		isWorkflowRunning,
 		stats,
 		onSelect,
 		onDelete,
@@ -34,7 +36,7 @@
 	}: Props = $props();
 
 
-	function formatMemory( bytes: number, totalBytes: number ) : string {
+	function formatMemory( bytes: number ) : string {
 		const mb = bytes / ( 1024 * 1024 );
 		return `${ mb.toFixed( 0 ) } MB`;
 	}
@@ -105,22 +107,24 @@
 
 
 <div
-	class="bg-slate-900 border { activeLogInstanceId === instance.id ? 'border-violet-500/50 ring-1 ring-violet-500/20' : 'border-slate-800/80' } rounded-2xl p-5 hover:border-slate-700/80 transition-all duration-300 shadow-md flex flex-col justify-between group relative cursor-pointer"
-	onclick={ ( () => onSelect( instance.id ) ) }
-	onkeydown={ ( ( e ) => { if ( e.key === 'Enter' || e.key === ' ' ) { e.preventDefault(); onSelect( instance.id ); } } ) }
-	role="button"
-	tabindex="0"
+	class       = "{ instance.isCustom ? 'bg-slate-800' : 'bg-slate-900' } border { activeLogInstanceId === instance.id ? 'border-violet-500/50 ring-1 ring-violet-500/20' : 'border-slate-800/80' } rounded-2xl p-5 hover:border-slate-700/80 transition-all duration-300 shadow-md flex flex-col justify-between group relative cursor-pointer"
+	onclick     = { ( () => onSelect( instance.id ) ) }
+	onkeydown   = { ( ( e ) => { if ( e.key === 'Enter' || e.key === ' ' ) { e.preventDefault(); onSelect( instance.id ); } } ) }
+	role        = "button"
+	tabindex    = "0"
 >
 	<!-- Delete Button -->
-	<button
-		onclick={ ( ( e ) => { e.stopPropagation(); onDelete( instance.id ); } ) }
-		class="absolute top-4 right-4 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-red-400 transition-all duration-150"
-		title="Eliminar Instancia"
-	>
-		<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-		</svg>
-	</button>
+	{#if !isRunning && !isWorkflowRunning}
+		<button
+			onclick={ ( ( e ) => { e.stopPropagation(); onDelete( instance.id ); } ) }
+			class="absolute top-4 right-4 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-red-400 transition-all duration-150"
+			title="Eliminar Instancia"
+		>
+			<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+			</svg>
+		</button>
+	{/if}
 
 	<div>
 		<div class="flex items-center justify-between mb-3 pr-6 select-none">
@@ -158,16 +162,21 @@
 					</div>
 				{:else}
 					<span class="font-bold text-slate-200 text-base truncate">{ instance.name }</span>
+					{#if instance.isCustom}
+						<span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse shrink-0" title="Workflow Custom Command"></span>
+					{/if}
 
-                    <button
-						onclick={ ( ( e ) => { e.stopPropagation(); startNameEditing(); } ) }
-						class="p-1 rounded-md text-slate-500 hover:text-violet-400 hover:bg-slate-800 transition-all"
-						title="Editar nombre del script"
-					>
-						<svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-						</svg>
-					</button>
+                    {#if !isRunning && !isWorkflowRunning}
+						<button
+							onclick={ ( ( e ) => { e.stopPropagation(); startNameEditing(); } ) }
+							class="p-1 rounded-md text-slate-500 hover:text-violet-400 hover:bg-slate-800 transition-all"
+							title="Editar nombre del script"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+							</svg>
+						</button>
+					{/if}
 				{/if}
 			</div>
 
@@ -218,27 +227,22 @@
 					{ instance.command }
 				</p>
 
-                <button
-					onclick={ ( ( e ) => { e.stopPropagation(); startCommandEditing(); } ) }
-					class="absolute right-2 top-1.5 opacity-0 group-hover/cmd:opacity-100 p-1 rounded-md text-slate-500 hover:text-violet-400 hover:bg-slate-800/60 transition-all"
-					title="Editar comando"
-				>
-					<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-					</svg>
-				</button>
+				{#if !isRunning && !isWorkflowRunning}
+					<button
+						onclick={ ( ( e ) => { e.stopPropagation(); startCommandEditing(); } ) }
+						class="absolute right-2 top-1.5 opacity-0 group-hover/cmd:opacity-100 p-1 rounded-md text-slate-500 hover:text-violet-400 hover:bg-slate-800/60 transition-all"
+						title="Editar comando"
+					>
+						<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+						</svg>
+					</button>
+				{/if}
 			{/if}
 		</div>
 	</div>
 
 	<div class="flex items-center justify-between pt-2 border-t border-slate-800/60 mt-2 select-none">
-		<!-- <div class="flex items-center gap-3 text-xs text-slate-500">
-			<span class="flex items-center gap-1">
-				<span class="w-1.5 h-1.5 rounded-full { isRunning ? 'bg-emerald-500 animate-pulse' : 'bg-slate-700' }"></span>
-
-                { isRunning ? 'Activo' : 'Inactivo' }
-			</span>
-		</div> -->
 		{#if isRunning && stats}
 			<div class="grid sm:flex items-center gap-2 bg-slate-950/60 backdrop-blur-xs px-3.5 py-1.5 rounded-xl border border-slate-800/50 hover:border-violet-500/20 transition-colors duration-300 shadow-inner">
 				<div class="flex items-center gap-1.5">
@@ -256,7 +260,7 @@
 
                     <span class="text-[10px] font-bold text-slate-400 tracking-wider md:hidden 2xl:flex">RAM:</span>
 
-                    <span class="text-[11px] font-bold font-mono text-violet-300">{ formatMemory( stats.memory, stats.total_memory ) }</span>
+                    <span class="text-[11px] font-bold font-mono text-violet-300">{ formatMemory( stats.memory ) }</span>
 
                     <span class="text-[11px] font-bold font-mono text-violet-300 md:hidden 2xl:flex">{ formatMemoryPercentage( stats.memory, stats.total_memory ) }</span>
 				</div>
@@ -269,7 +273,11 @@
 
         <button
 			onclick={ ( ( e ) => { e.stopPropagation(); onToggle( instance ); } ) }
-			class="px-3 py-1.5 { isRunning ? 'bg-red-600 hover:bg-red-500 shadow-red-600/10' : 'bg-linear-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 shadow-violet-600/10' } text-white text-xs font-bold rounded-xl transition-all shadow-lg hover:shadow-xl"
+			class="px-3 py-1.5 {
+                isRunning
+                ? 'bg-red-600 hover:bg-red-500 shadow-red-600/10'
+                : 'bg-linear-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 shadow-violet-600/10'
+            } text-white text-xs font-bold rounded-xl transition-all shadow-lg hover:shadow-xl"
 		>
             {#if isRunning}
                 <Square class="size-4" />

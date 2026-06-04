@@ -37,6 +37,14 @@ pub struct StatusPayload {
 	pub exit_code   : Option<i32>,
 }
 
+#[derive( Clone, serde::Serialize )]
+pub struct StatsPayload {
+	pub instance_id  : String,
+	pub cpu          : f32,
+	pub memory       : u64,
+	pub total_memory : u64,
+}
+
 #[tauri::command]
 pub async fn select_directory( app: tauri::AppHandle ) -> Result<Option<String>, String> {
 	let folder = app.dialog()

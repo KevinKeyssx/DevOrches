@@ -2,20 +2,29 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 
-    import { Plus } from '@lucide/svelte';
+    import {
+        ChevronDown,
+        Folder,
+        Plus,
+        Terminal,
+        Workflow as WorkflowIcon
+    }                   from '@lucide/svelte';
+	import { slide }    from 'svelte/transition';
 
     import type {
 		Project,
-		Instance
-	}                   from './lib/types';
-	import InstanceCard from './components/InstanceCard.svelte';
-	import Console      from './components/Console.svelte';
-	import Sidebar      from './components/Sidebar.svelte';
-	import LogViewer    from './components/LogViewer.svelte';
+		Instance,
+		Workflow
+	}                      from './lib/types';
+	import InstanceCard    from './components/InstanceCard.svelte';
+	import Console         from './components/Console.svelte';
+	import Sidebar         from './components/Sidebar.svelte';
+	import LogViewer       from './components/LogViewer.svelte';
+	import WorkflowSection from './components/WorkflowSection.svelte';
 
 	// Detección de ventana secundaria de log viewer
-	const urlParams = new URLSearchParams( window.location.search );
-	const logViewerKey = urlParams.get( 'logViewerKey' );
+	const urlParams     = new URLSearchParams( window.location.search );
+	const logViewerKey  = urlParams.get( 'logViewerKey' );
 
 	interface LogViewerData {
 		instanceName : string;
@@ -26,7 +35,8 @@
 
 	if ( logViewerKey ) {
 		const raw = localStorage.getItem( logViewerKey );
-		if ( raw ) {
+
+        if ( raw ) {
 			try {
 				logViewerData = JSON.parse( raw ) as LogViewerData;
 			} catch {
@@ -35,12 +45,14 @@
 		}
 	}
 
-	let projects        = $state<Project[]>( [] );
-	let selectedProject = $state<Project | null>( null );
-	let newProjectName  = $state( '' );
-	let addedPaths      = $state<string[]>( [] );
-	let isAddingProject = $state( false );
-	// let errorMessage    = $state( '' );
+	let projects          = $state<Project[]>( [] );
+	let selectedProject   = $state<Project | null>( null );
+	let newProjectName    = $state( '' );
+	let addedPaths        = $state<string[]>( [] );
+	let isAddingProject   = $state( false );
+	let activeTab         = $state<'scripts' | 'workflows'>( 'scripts' );
+	let currentWorkflow   = $state<Workflow | null>( null );
+	let isWorkflowRunning = $state( false );
 
 	// Process Execution & Log State
 	let instanceLogs        = $state<Record<string, string>>( {} );
@@ -62,6 +74,7 @@
 	let toastType       = $state<'info' | 'error' | 'success'>( 'info' );
 
     let toastTimeout: any = null;
+	let projectsCollapsedPaths = $state<Record<string, boolean>>( {} );
 
 	$effect( () => {
 		loadProjects();
@@ -144,22 +157,70 @@
 		};
 	} ) );
 
+	function joinPaths( root: string, rel: string ) : string {
+		const r = root.replace( /\\/g, '/' );
+
+        let s = rel.replace( /\\/g, '/' );
+
+        if ( s.startsWith( './' )) {
+			s = s.substring( 2 );
+		}
+
+        if ( r.endsWith( '/' ) ) {
+			return `${ r }${ s }`;
+		}
+
+        return `${ r }/${ s }`;
+	}
+
 	// Group instances by path reactively using Svelte 5 derived rune
-	let groupedInstances = $derived.by( () => {
+	let groupedInstances = $derived.by( ( () => {
 		if ( !selectedProject ) return {};
 
-        const groups: Record<string, Instance[]> = {};
+		const groups: Record<string, Instance[]> = {};
+		const projectInstances = selectedProject.instances || [];
 
-        for ( const inst of selectedProject.instances ) {
-            if ( !groups[ inst.path ] ) {
+		for ( const inst of projectInstances ) {
+			if ( !inst || !inst.path ) continue;
+			if ( !groups[ inst.path ] ) {
 				groups[ inst.path ] = [];
 			}
 
-            groups[ inst.path ].push( inst );
+			groups[ inst.path ].push( {
+				...inst,
+				isCustom : false,
+			} );
 		}
 
-        return groups;
-	});
+		if ( currentWorkflow && Array.isArray( currentWorkflow.instances ) ) {
+			const rootPath = selectedProject.paths && selectedProject.paths[ 0 ] ? selectedProject.paths[ 0 ] : '';
+
+            for ( const ci of currentWorkflow.instances ) {
+				if ( !ci || !ci.path ) continue;
+
+                const absPath   = joinPaths( rootPath, ci.path );
+				const id        = `${ absPath }#${ ci.script_name }`;
+
+				if ( !groups[ absPath ] ) {
+					groups[ absPath ] = [];
+				}
+
+				if ( !groups[ absPath ].some( ( inst ) => inst.id === id ) ) {
+					groups[ absPath ].push( {
+						id,
+						name     : ci.name || ci.script_name,
+						command  : ci.command,
+						cwd      : null,
+						env      : {},
+						path     : absPath,
+						isCustom : true,
+					});
+				}
+			}
+		}
+
+		return groups;
+	}));
 
 
     function showToast( msg: string, type: 'info' | 'error' | 'success' = 'info' ): void {
@@ -242,6 +303,13 @@
 
     async function selectProject( project: Project ): Promise<void> {
 		selectedProject = project;
+		activeTab       = 'scripts';
+		try {
+			currentWorkflow = await invoke<Workflow | null>( 'load_workflow', { projectId : project.id } );
+		} catch ( err ) {
+			currentWorkflow = null;
+			showToast( `Error al cargar el workflow: ${ err }`, 'error' );
+		}
 	}
 
 
@@ -298,6 +366,38 @@
     async function handleDeleteInstance( instanceId: string ) {
 		if ( !selectedProject ) return;
 
+		const isCustom = !selectedProject.instances.some( ( inst ) => inst.id === instanceId );
+		if ( isCustom ) {
+			if ( !currentWorkflow ) return;
+
+            const parts = instanceId.split( '#' );
+
+            if ( parts.length === 2 ) {
+				const scriptName = parts[ 1 ];
+
+                if ( currentWorkflow.instances ) {
+					currentWorkflow.instances = currentWorkflow.instances.filter( ( ci ) => ci.script_name !== scriptName );
+				}
+
+                currentWorkflow.steps = currentWorkflow.steps.filter( ( step ) => step.script_name !== scriptName );
+				currentWorkflow = {
+					...currentWorkflow,
+					instances : currentWorkflow.instances ? [ ...currentWorkflow.instances ] : null,
+					steps     : [ ...currentWorkflow.steps ]
+				};
+
+                try {
+					await invoke( 'save_workflow', { projectId : selectedProject.id, workflow : currentWorkflow } );
+
+                    showToast( 'Script personalizado eliminado.', 'success' );
+				} catch ( err ) {
+					showToast( `Error al guardar workflow: ${ err }`, 'error' );
+				}
+			}
+
+            return;
+		}
+
         try {
 			await invoke( 'delete_project_instance', {
 				projectId  : selectedProject.id,
@@ -353,6 +453,36 @@
 	async function handleUpdateInstanceName( inst: Instance, newName: string ) {
 		if ( !selectedProject ) return;
 
+		if ( inst.isCustom ) {
+			if ( !currentWorkflow ) return;
+			if ( currentWorkflow.instances ) {
+                const parts = inst.id.split( '#' );
+
+                if ( parts.length === 2 ) {
+					const scriptName = parts[ 1 ];
+					const ci = currentWorkflow.instances.find( ( c ) => c.script_name === scriptName );
+
+                    if ( ci ) {
+						ci.name = newName;
+						currentWorkflow = {
+							...currentWorkflow,
+							instances : [ ...currentWorkflow.instances ]
+						};
+
+                        try {
+							await invoke( 'save_workflow', { projectId : selectedProject.id, workflow : currentWorkflow } );
+
+                            showToast( 'Nombre del script personalizado actualizado.', 'success' );
+						} catch ( err ) {
+							showToast( `Error al guardar workflow: ${ err }`, 'error' );
+						}
+					}
+				}
+			}
+
+            return;
+		}
+
         try {
 			await invoke( 'update_instance', {
 				projectId  : selectedProject.id,
@@ -375,18 +505,50 @@
     async function handleUpdateInstanceCommand( inst: Instance, newCommand: string ) {
 		if ( !selectedProject ) return;
 
+		if ( inst.isCustom ) {
+			if ( !currentWorkflow ) return;
+			if ( currentWorkflow.instances ) {
+				const parts = inst.id.split( '#' );
+
+                if ( parts.length === 2 ) {
+					const scriptName = parts[ 1 ];
+					const ci = currentWorkflow.instances.find( ( c ) => c.script_name === scriptName );
+
+                    if ( ci ) {
+						ci.command = newCommand;
+						currentWorkflow = {
+							...currentWorkflow,
+							instances : [ ...currentWorkflow.instances ]
+						};
+
+                        try {
+							await invoke( 'save_workflow', { projectId : selectedProject.id, workflow : currentWorkflow } );
+
+                            showToast( 'Comando del script personalizado actualizado.', 'success' );
+						} catch ( err ) {
+							showToast( `Error al guardar workflow: ${ err }`, 'error' );
+						}
+					}
+				}
+			}
+
+            return;
+		}
+
         try {
 			await invoke( 'update_instance', {
 				projectId  : selectedProject.id,
 				instanceId : inst.id,
 				newName    : inst.name,
 				newCommand,
-			} );
+			});
 
 			inst.command = newCommand;
-			selectedProject = { ...selectedProject };
+
+            selectedProject = { ...selectedProject };
 			projects = projects.map( ( p ) => p.id === selectedProject!.id ? selectedProject! : p );
-			showToast( 'Comando del script actualizado.', 'success' );
+
+            showToast( 'Comando del script actualizado.', 'success' );
 		} catch ( err ) {
 			showToast( String( err ), 'error' );
 		}
@@ -394,16 +556,18 @@
 
 	// Inline Manual Addition
 	function startAddingManualScript( path: string ) {
-		pathAddingScript = path;
-		newManualName = '';
-		newManualCommand = '';
+		pathAddingScript    = path;
+		newManualName       = '';
+		newManualCommand    = '';
 	}
 
-	function cancelAddingManualScript() {
+
+    function cancelAddingManualScript() {
 		pathAddingScript = null;
 	}
 
-	function handleManualKeyDown( e: KeyboardEvent, path: string ) {
+
+    function handleManualKeyDown( e: KeyboardEvent, path: string ) {
 		if ( e.key === 'Enter' ) {
 			e.preventDefault();
 			handleSaveManualScript( path );
@@ -412,7 +576,8 @@
 		}
 	}
 
-	async function handleSaveManualScript( path: string ) {
+
+    async function handleSaveManualScript( path: string ) {
 		if ( !selectedProject ) return;
 		if ( !newManualName.trim() || !newManualCommand.trim() ) {
 			showToast( 'Por favor, llena el nombre y el comando.', 'error' );
@@ -425,13 +590,14 @@
 				path,
 				name      : newManualName,
 				command   : newManualCommand,
-			} );
+			});
 
 			selectedProject.instances.push( newInst );
-			selectedProject = { ...selectedProject };
-			projects = projects.map( ( p ) => p.id === selectedProject!.id ? selectedProject! : p );
 
-			newManualName = '';
+            selectedProject = { ...selectedProject };
+			projects        = projects.map( ( p ) => p.id === selectedProject!.id ? selectedProject! : p );
+
+			newManualName    = '';
 			newManualCommand = '';
 			pathAddingScript = null;
 
@@ -461,7 +627,6 @@
 	/>
 {:else}
 <main class="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 font-sans">
-
 	<!-- Toast Notification -->
 	{#if toastMessage}
 		<div class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
@@ -473,7 +638,8 @@
 				{:else}
 					<span class="w-2 h-2 rounded-full bg-violet-500"></span>
 				{/if}
-				{ toastMessage }
+
+                { toastMessage }
 			</div>
 		</div>
 	{/if}
@@ -491,22 +657,33 @@
 	<section class="flex-1 flex flex-col min-w-0 relative">
 		{#if selectedProject}
 			<!-- Project Detail Header -->
-			<header class="p-6 border-b border-slate-800 bg-slate-900/50 backdrop-blur-md flex flex-col gap-4">
+			<header class="p-6 border-b border-slate-800 bg-slate-900/50 backdrop-blur-md flex flex-col gap-3">
 				<div class="flex items-center justify-between">
-					<div class="min-w-0">
+					<div class="min-w-0 flex flex-col gap-3">
 						<h2 class="text-2xl font-bold text-white tracking-tight">{ selectedProject.name }</h2>
 					</div>
-					<div class="flex items-center gap-3">
-						<button
-							onclick={ handleAddPathToSelectedProject }
-							class="px-2 sm:px-4 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-slate-600 text-slate-200 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
-						>
-                            <Plus class="size-4"/>
 
-                            <span class="hidden sm:flex">
-                                Agregar Path
-                            </span>
-						</button>
+                    <div class="flex items-center gap-3">
+                        <div class="flex border border-slate-800 p-0.5 self-start bg-slate-950 rounded-xl select-none">
+                            <!-- Tab Navigation Pill -->
+							<button
+                                title="Scripts"
+								onclick={ ( () => activeTab = 'scripts' ) }
+								class="px-4 py-1.5 text-xs flex items-center gap-1.5 font-bold rounded-lg transition-all { activeTab === 'scripts' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200' }"
+							>
+                                <Terminal class="size-4" />
+                                <span class="hidden sm:flex">Scripts</span>
+							</button>
+
+                            <button
+                                title="Workflows"
+								onclick={ ( () => activeTab = 'workflows' ) }
+								class="px-4 py-1.5 text-xs flex items-center gap-1.5 font-bold rounded-lg transition-all { activeTab === 'workflows' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200' }"
+							>
+                                <WorkflowIcon class="size-4" />
+                                <span class="hidden sm:flex">Workflows</span>
+							</button>
+						</div>
 
                         <span class="inline-flex items-center gap-1.5 px-3 py-3 sm:py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 select-none">
 							<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -519,124 +696,178 @@
 
 				<!-- Registered Paths List -->
 				<div class="space-y-1 bg-slate-950/50 p-3 rounded-2xl border border-slate-800/80">
-					<span class="text-[10px] uppercase font-bold text-slate-500 tracking-wider block mb-1.5 select-none">Rutas Vinculadas</span>
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-[10px] uppercase font-bold text-slate-500 tracking-wider block select-none">
+                            Rutas Vinculadas ({ selectedProject?.paths?.length || 0 })
+                        </span>
 
-                    <div class="grid  grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 lg:gap-5">
-                        {#each selectedProject.paths as path}
-                            <div class="text-xs font-mono text-slate-400 truncate flex items-center gap-2 select-all">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-slate-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                                </svg>
-                                { path }
-                            </div>
-                        {/each}
+                        <div class="flex items-center gap-2">
+                            <button
+                                onclick={ handleAddPathToSelectedProject }
+                                class="px-2 sm:px-4 py-0.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-slate-600 text-slate-200 hover:text-white rounded-xl font-bold transition-all flex items-center gap-1.5"
+                            >
+                                <Plus class="size-3"/>
+
+                                <span class="hidden sm:flex text-[11px]">
+                                    Agregar Path
+                                </span>
+                            </button>
+
+                            <button
+                                onclick={( () => {
+                                    if ( selectedProject ) {
+                                        projectsCollapsedPaths[ selectedProject.id ] = !projectsCollapsedPaths[ selectedProject.id ];
+                                    }
+                                })}
+                                class="px-1 py-0.5 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl font-bold transition-all flex items-center gap-1.5"
+                            >
+                                <ChevronDown class="size-4 transition-transform duration-300 { selectedProject && projectsCollapsedPaths[ selectedProject.id ] ? 'rotate-180' : '' }"/>
+                            </button>
+                        </div>
                     </div>
+
+                    {#if !( selectedProject && projectsCollapsedPaths[ selectedProject.id ] )}
+                        <div
+                            transition:slide
+                            class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 lg:gap-5"
+                        >
+                            {#each selectedProject?.paths || [] as path}
+                                <div class="text-xs font-mono text-slate-400 truncate flex items-center gap-1.5 select-all">
+                                    <Folder class="size-3.5 text-slate-600" />
+                                    { path }
+                                </div>
+                            {/each}
+                        </div>
+                    {/if}
 				</div>
 			</header>
 
 			<!-- Project Workspace -->
 			<div class="flex-1 overflow-y-auto p-6 space-y-8 bg-slate-950">
-				<!-- Grouped Instances Grid -->
-				<div class="space-y-8">
-					{#each Object.entries( groupedInstances ) as [ path, instances ] ( path )}
-						<div class="space-y-4">
-							<!-- Group Title -->
-							<div class="flex items-center justify-between pb-2 border-b border-slate-800/80 select-none">
-								<div class="flex items-center gap-2 min-w-0">
-									<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-violet-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-									</svg>
-									<span class="text-xs font-mono text-slate-300 font-bold truncate pr-3">{ path }</span>
-									<span class="text-[10px] font-semibold bg-violet-500/10 text-violet-400 px-2 py-0.5 rounded-full border border-violet-500/20 flex items-center gap-0.5">{ instances.length }
-                                        <span class="hidden sm:flex">
-                                            scripts
-                                        </span>
-                                    </span>
+				{#if activeTab === 'scripts'}
+					<!-- Grouped Instances Grid -->
+					<div class="space-y-8">
+						{#each Object.entries( groupedInstances ) as [ path, instances ] ( path )}
+							<div class="space-y-4">
+								<!-- Group Title -->
+								<div class="flex items-center justify-between pb-2 border-b border-slate-800/80 select-none">
+									<div class="flex items-center gap-2 min-w-0">
+										<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-violet-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+										</svg>
+
+                                        <span class="text-xs font-mono text-slate-300 font-bold truncate pr-3">{ path }</span>
+
+                                        <span class="text-[10px] font-semibold bg-violet-500/10 text-violet-400 px-2 py-0.5 rounded-full border border-violet-500/20 flex items-center gap-0.5">{ instances.length }
+											<span class="hidden sm:flex">
+												scripts
+											</span>
+										</span>
+									</div>
+
+									<button
+										onclick={ ( () => startAddingManualScript( path ) ) }
+										class="px-2.5 py-1 hover:bg-slate-800 hover:text-violet-400 rounded-lg text-slate-400 text-xs font-bold transition-all flex items-center gap-1"
+									>
+										<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+										</svg>
+
+										<span class="hidden sm:flex">
+											Script Manual
+										</span>
+									</button>
 								</div>
 
-								<button
-									onclick={ ( () => startAddingManualScript( path ) ) }
-									class="px-2.5 py-1 hover:bg-slate-800 hover:text-violet-400 rounded-lg text-slate-400 text-xs font-bold transition-all flex items-center gap-1"
-								>
-									<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-									</svg>
+								<div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3 lg:gap-5">
+									{#each instances as instance ( instance.id )}
+										<InstanceCard
+											{ instance }
+											{ activeLogInstanceId }
+											isRunning={ !!runningStatuses[ instance.id ] }
+											{ isWorkflowRunning }
+											stats={ instanceStats[ instance.id ] }
+											onSelect={ ( ( id ) => activeLogInstanceId = id ) }
+											onDelete={ handleDeleteInstance }
+											onToggle={ toggleInstance }
+											onUpdateName={ handleUpdateInstanceName }
+											onUpdateCommand={ handleUpdateInstanceCommand }
+										/>
+									{/each}
 
-                                    <span class="hidden sm:flex">
-                                        Script Manual
-                                    </span>
-								</button>
-							</div>
+									<!-- Inline Adding Manual Script Card -->
+									{#if pathAddingScript === path}
+										<div class="bg-slate-900 border border-violet-500/30 rounded-2xl p-5 shadow-lg flex flex-col justify-between animate-scale-up">
+											<div class="space-y-3">
+												<div class="flex items-center justify-between select-none">
+													<span class="text-[10px] font-bold text-violet-400 uppercase tracking-wider">Nuevo Script Manual</span>
 
-							<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 lg:gap-5">
-								{#each instances as instance ( instance.id )}
-									<InstanceCard
-										{ instance }
-										{ activeLogInstanceId }
-										isRunning={ !!runningStatuses[ instance.id ] }
-										stats={ instanceStats[ instance.id ] }
-										onSelect={ ( ( id ) => activeLogInstanceId = id ) }
-										onDelete={ handleDeleteInstance }
-										onToggle={ toggleInstance }
-										onUpdateName={ handleUpdateInstanceName }
-										onUpdateCommand={ handleUpdateInstanceCommand }
-									/>
-								{/each}
+                                                    <button
+														onclick={ cancelAddingManualScript }
+														class="text-slate-500 hover:text-slate-300 text-sm font-semibold"
+													>
+														&times;
+													</button>
+												</div>
 
-								<!-- Inline Adding Manual Script Card -->
-								{#if pathAddingScript === path}
-									<div class="bg-slate-900 border border-violet-500/30 rounded-2xl p-5 shadow-lg flex flex-col justify-between animate-scale-up">
-										<div class="space-y-3">
-											<div class="flex items-center justify-between select-none">
-												<span class="text-[10px] font-bold text-violet-400 uppercase tracking-wider">Nuevo Script Manual</span>
+                                                <input
+													type="text"
+													bind:value={ newManualName }
+													onkeydown={ ( ( e ) => handleManualKeyDown( e, path ) ) }
+													class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500/40 transition-colors"
+													placeholder="Nombre (ej: dev:watch)"
+												/>
+
+                                                <input
+													type="text"
+													bind:value={ newManualCommand }
+													onkeydown={ ( ( e ) => handleManualKeyDown( e, path ) ) }
+													class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500/40 transition-colors"
+													placeholder="Comando (ej: pnpm start)"
+												/>
+											</div>
+
+                                            <div class="flex items-center justify-end gap-2 pt-3 mt-2 border-t border-slate-800/40 select-none">
 												<button
 													onclick={ cancelAddingManualScript }
-													class="text-slate-500 hover:text-slate-300 text-sm font-semibold"
+													class="px-2 py-1 text-[10px] font-semibold text-slate-400 hover:text-white hover:bg-slate-800 rounded"
 												>
-													&times;
+													Cancelar
+												</button>
+
+                                                <button
+													onclick={ ( () => handleSaveManualScript( path ) ) }
+													class="px-2.5 py-1 bg-violet-600 hover:bg-violet-500 text-[10px] font-semibold text-white rounded shadow"
+												>
+													Guardar
 												</button>
 											</div>
-											<input
-												type="text"
-												bind:value={ newManualName }
-												onkeydown={ ( ( e ) => handleManualKeyDown( e, path ) ) }
-												class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500/40 transition-colors"
-												placeholder="Nombre (ej: dev:watch)"
-											/>
-											<input
-												type="text"
-												bind:value={ newManualCommand }
-												onkeydown={ ( ( e ) => handleManualKeyDown( e, path ) ) }
-												class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500/40 transition-colors"
-												placeholder="Comando (ej: pnpm start)"
-											/>
 										</div>
-										<div class="flex items-center justify-end gap-2 pt-3 mt-2 border-t border-slate-800/40 select-none">
-											<button
-												onclick={ cancelAddingManualScript }
-												class="px-2 py-1 text-[10px] font-semibold text-slate-400 hover:text-white hover:bg-slate-800 rounded"
-											>
-												Cancelar
-											</button>
-											<button
-												onclick={ ( () => handleSaveManualScript( path ) ) }
-												class="px-2.5 py-1 bg-violet-600 hover:bg-violet-500 text-[10px] font-semibold text-white rounded shadow"
-											>
-												Guardar
-											</button>
-										</div>
-									</div>
-								{/if}
+									{/if}
+								</div>
 							</div>
-						</div>
-					{/each}
+						{/each}
 
-					{#if selectedProject.instances.length === 0}
-						<div class="bg-slate-900 border border-dashed border-slate-800 rounded-2xl p-8 text-center select-none">
-							<p class="text-sm text-slate-500 font-medium">No hay instancias registradas en este proyecto.</p>
-						</div>
-					{/if}
-				</div>
+						{#if (( selectedProject?.instances ) || [] ).length === 0 && ( !currentWorkflow || !Array.isArray( currentWorkflow.instances ) || currentWorkflow.instances.length === 0 )}
+							<div class="bg-slate-900 border border-dashed border-slate-800 rounded-2xl p-8 text-center select-none">
+								<p class="text-sm text-slate-500 font-medium">No hay instancias registradas en este proyecto.</p>
+							</div>
+						{/if}
+					</div>
+				{:else if activeTab === 'workflows'}
+					<!-- Workflow pipeline and step manager view -->
+					<div class="animate-scale-up">
+						<WorkflowSection
+							project={ selectedProject }
+							{ runningStatuses }
+							{ activeLogInstanceId }
+							onSelectInstance={ ( ( id ) => activeLogInstanceId = id ) }
+							{ showToast }
+							bind:currentWorkflow
+							bind:isWorkflowRunning
+						/>
+					</div>
+				{/if}
 
 				<!-- Unified Log Terminal -->
 				<Console
@@ -654,11 +885,14 @@
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
 					</svg>
 				</div>
-				<h2 class="text-2xl font-bold text-white mb-2">Comienza con DevOrches</h2>
-				<p class="text-slate-500 text-sm max-w-sm text-center mb-8 leading-relaxed">
+
+                <h2 class="text-2xl font-bold text-white mb-2">Comienza con DevOrches</h2>
+
+                <p class="text-slate-500 text-sm max-w-sm text-center mb-8 leading-relaxed">
 					Agrega un nuevo proyecto local para escanear sus scripts, levantar instancias y controlar tus servicios de desarrollo.
 				</p>
-				<button
+
+                <button
 					onclick={ ( () => isAddingProject = true ) }
 					class="px-6 py-3 bg-linear-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl font-bold text-sm shadow-xl shadow-violet-600/10 hover:shadow-violet-600/20 transition-all"
 				>
@@ -674,7 +908,8 @@
 			<div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-md p-8 shadow-2xl animate-scale-up">
 				<div class="flex items-center justify-between mb-6 select-none">
 					<h3 class="text-lg font-bold text-white">Registrar Nuevo Proyecto</h3>
-					<button
+
+                    <button
 						onclick={ ( () => { isAddingProject = false; addedPaths = []; } ) }
 						class="text-slate-500 hover:text-white transition-colors text-xl font-semibold"
 					>
@@ -685,7 +920,8 @@
 				<form onsubmit={ ( e ) => { e.preventDefault(); handleAddProject(); } } class="space-y-5">
 					<div>
 						<label for="name" class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 select-none">Nombre del Proyecto</label>
-						<input
+
+                        <input
 							type="text"
 							id="name"
 							bind:value={ newProjectName }
@@ -697,7 +933,8 @@
 					<div>
 						<div class="flex items-center justify-between mb-2 select-none">
 							<span class="block text-xs font-bold text-slate-400 uppercase tracking-widest">Paths Vinculados</span>
-							<button
+
+                            <button
 								type="button"
 								onclick={ selectFolderForNewProject }
 								class="text-xs font-bold text-violet-400 hover:text-violet-300 transition-colors flex items-center gap-1"
@@ -741,7 +978,8 @@
 						>
 							Cancelar
 						</button>
-						<button
+
+                        <button
 							type="submit"
 							class="flex-1 py-3 bg-linear-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl font-bold text-sm shadow-xl shadow-violet-600/10 hover:shadow-violet-600/20 transition-all"
 						>

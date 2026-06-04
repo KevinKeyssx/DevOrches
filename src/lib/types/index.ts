@@ -8,35 +8,32 @@ export interface Project {
 }
 
 export interface Instance {
-	id      : string;
-	name    : string;
-	command : string;
-	cwd     : string | null;
-	env     : Record<string, string>;
-	path    : string;
+	id        : string;
+	name      : string;
+	command   : string;
+	cwd       : string | null;
+	env       : Record<string, string>;
+	path      : string;
+	isCustom? : boolean;
 }
 
-export interface WaitCondition {
-	port     : number | null;
-	logMatch : string | null;
-	delayMs  : number | null;
+export interface CustomInstance {
+	name        : string;
+	path        : string;
+	script_name : string;
+	command     : string;
 }
 
 export interface WorkflowStep {
-	instanceId : string;
-	waitFor    : WaitCondition | null;
-}
-
-export interface WorkflowPhase {
-	name     : string;
-	parallel : boolean;
-	steps    : WorkflowStep[];
+	name          : string;
+	path          : string;
+	script_name   : string;
+	fail_on_error : boolean;
+	env           : Record<string, string> | null;
 }
 
 export interface Workflow {
-	version   : string;
-	name      : string | null;
-	env       : Record<string, string>;
-	instances : Instance[];
-	phases    : WorkflowPhase[];
+	name      : string;
+	instances : CustomInstance[] | null;
+	steps     : WorkflowStep[];
 }

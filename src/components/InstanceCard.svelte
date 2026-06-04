@@ -1,10 +1,18 @@
 <script lang="ts">
-	import type { Instance } from '../lib/types';
+    import { Play, Square, Cpu, MemoryStick } from '@lucide/svelte';
 
-	interface Props {
+    import type { Instance } from '../lib/types';
+
+
+    interface Props {
 		instance            : Instance;
 		activeLogInstanceId : string | null;
 		isRunning           : boolean;
+		stats               : {
+			cpu          : number;
+			memory       : number;
+			total_memory : number;
+		} | undefined;
 		onSelect            : ( id: string ) => void;
 		onDelete            : ( id: string ) => Promise<void>;
 		onToggle            : ( inst: Instance ) => Promise<void>;
@@ -13,16 +21,29 @@
 	}
 
 
-    let {
+	let {
 		instance,
 		activeLogInstanceId,
 		isRunning,
+		stats,
 		onSelect,
 		onDelete,
 		onToggle,
 		onUpdateName,
 		onUpdateCommand
 	}: Props = $props();
+
+
+	function formatMemory( bytes: number, totalBytes: number ) : string {
+		const mb = bytes / ( 1024 * 1024 );
+		return `${ mb.toFixed( 0 ) } MB`;
+	}
+
+
+    function formatMemoryPercentage( bytes: number, totalBytes: number ) : string {
+		const percentage = totalBytes > 0 ? ( bytes / totalBytes ) * 100 : 0;
+		return `${ percentage.toFixed( 1 ) }%`;
+	}
 
 
     let isEditingName       = $state( false );
@@ -150,7 +171,14 @@
 				{/if}
 			</div>
 
-            <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 border border-slate-700/30 shrink-0">script</span>
+            <!-- <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 border border-slate-700/30 shrink-0">script</span> -->
+            <div class="flex items-center gap-3 text-xs text-slate-500 mr-2">
+                <span class="flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full { isRunning ? 'bg-emerald-500 animate-pulse' : 'bg-slate-700' }"></span>
+
+                    { isRunning ? 'Activo' : 'Inactivo' }
+                </span>
+            </div>
 		</div>
 
 		<div class="relative group/cmd">
@@ -204,19 +232,50 @@
 	</div>
 
 	<div class="flex items-center justify-between pt-2 border-t border-slate-800/60 mt-2 select-none">
-		<div class="flex items-center gap-3 text-xs text-slate-500">
+		<!-- <div class="flex items-center gap-3 text-xs text-slate-500">
 			<span class="flex items-center gap-1">
 				<span class="w-1.5 h-1.5 rounded-full { isRunning ? 'bg-emerald-500 animate-pulse' : 'bg-slate-700' }"></span>
 
                 { isRunning ? 'Activo' : 'Inactivo' }
 			</span>
-		</div>
+		</div> -->
+		{#if isRunning && stats}
+			<div class="grid sm:flex items-center gap-2 bg-slate-950/60 backdrop-blur-xs px-3.5 py-1.5 rounded-xl border border-slate-800/50 hover:border-violet-500/20 transition-colors duration-300 shadow-inner">
+				<div class="flex items-center gap-1.5">
+					<!-- CPU Icon -->
+                    <Cpu class="size-3.5 text-violet-400" />
+
+                    <span class="text-[10px] font-bold text-slate-400 tracking-wider md:hidden 2xl:flex">CPU:</span>
+
+                    <span class="text-xs font-bold font-mono text-emerald-400 animate-pulse">{ stats.cpu.toFixed( 1 ) }%</span>
+				</div>
+				<!-- <div class="w-px h-3 bg-slate-800/60 hidden md:flex"></div> -->
+				<div class="flex items-center gap-1.5">
+					<!-- RAM Icon -->
+                    <MemoryStick class="size-3.5 text-violet-400" />
+
+                    <span class="text-[10px] font-bold text-slate-400 tracking-wider md:hidden 2xl:flex">RAM:</span>
+
+                    <span class="text-[11px] font-bold font-mono text-violet-300">{ formatMemory( stats.memory, stats.total_memory ) }</span>
+
+                    <span class="text-[11px] font-bold font-mono text-violet-300 md:hidden 2xl:flex">{ formatMemoryPercentage( stats.memory, stats.total_memory ) }</span>
+				</div>
+			</div>
+		{:else}
+			<div class="text-[11px] font-mono text-slate-500 italic">
+				Inactivo
+			</div>
+		{/if}
 
         <button
 			onclick={ ( ( e ) => { e.stopPropagation(); onToggle( instance ); } ) }
-			class="px-4 py-1.5 { isRunning ? 'bg-red-600 hover:bg-red-500 shadow-red-600/10' : 'bg-linear-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 shadow-violet-600/10' } text-white text-xs font-bold rounded-xl transition-all shadow-lg hover:shadow-xl"
+			class="px-3 py-1.5 { isRunning ? 'bg-red-600 hover:bg-red-500 shadow-red-600/10' : 'bg-linear-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 shadow-violet-600/10' } text-white text-xs font-bold rounded-xl transition-all shadow-lg hover:shadow-xl"
 		>
-			{ isRunning ? 'STOP' : 'START' }
+            {#if isRunning}
+                <Square class="size-4" />
+            {:else}
+                <Play class="size-4"/>
+            {/if}
 		</button>
 	</div>
 </div>

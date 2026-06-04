@@ -156,13 +156,18 @@
 	<div class="px-5 py-3.5 bg-slate-900 border-b border-slate-800 flex items-center justify-between select-none">
 		<div class="flex items-center gap-2">
 			<span class="w-3 h-3 rounded-full bg-red-500/80"></span>
-			<span class="w-3 h-3 rounded-full bg-yellow-500/80"></span>
-			<span class="w-3 h-3 rounded-full bg-green-500/80"></span>
-			<span class="text-xs text-slate-400 font-semibold ml-2 font-mono">
-				Consola de Logs Unificada: <span class="text-violet-400 font-bold">{ instanceName }</span>
+
+            <span class="w-3 h-3 rounded-full bg-yellow-500/80"></span>
+
+            <span class="w-3 h-3 rounded-full bg-green-500/80"></span>
+
+            <span class="text-xs text-slate-400 font-semibold ml-2 font-mono">
+				<!-- Consola de Logs Unificada: -->
+                <span class="text-violet-400 font-bold">{ instanceName }</span>
 			</span>
 		</div>
-		<div class="flex items-center gap-1">
+
+        <div class="flex items-center gap-1">
 			<ConsoleActions
 				logs={ logs }
 				instanceName={ instanceName }
@@ -182,10 +187,11 @@
 				</svg>
 			</button>
 
-			<span class="text-[10px] text-slate-600 font-mono ml-2">terminal</span>
+			<!-- <span class="text-[10px] text-slate-600 font-mono ml-2">terminal</span> -->
 		</div>
 	</div>
-	<div
+
+    <div
 		bind:this={ terminalContainer }
 		class="w-full h-full bg-[#0b0f19] p-4 overflow-hidden"
 	></div>

@@ -2,7 +2,9 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 
-	import type {
+    import { Plus } from '@lucide/svelte';
+
+    import type {
 		Project,
 		Instance
 	}                   from './lib/types';
@@ -44,6 +46,11 @@
 	let instanceLogs        = $state<Record<string, string>>( {} );
 	let runningStatuses     = $state<Record<string, boolean>>( {} );
 	let activeLogInstanceId = $state<string | null>( null );
+	let instanceStats       = $state<Record<string, {
+		cpu          : number;
+		memory       : number;
+		total_memory : number;
+	}>>( {} );
 
 	// Script Manual Addition State
 	let pathAddingScript    = $state<string | null>( null );
@@ -61,44 +68,70 @@
 	});
 
 	// Listeners for Rust events (logs and process status changes)
-	$effect( () => {
+	$effect( ( () => {
 		let active = true;
 
-        let unlistenLog     : (() => void) | null = null;
-		let unlistenStatus  : (() => void) | null = null;
+		let unlistenLog    : ( () => void ) | null = null;
+		let unlistenStatus : ( () => void ) | null = null;
+		let unlistenStats  : ( () => void ) | null = null;
 
 		const setupListeners = async () => {
-			const uLog = await listen<{ instance_id: string; text: string }>( 'instance-log', ( ( event ) => {
+			const uLog = await listen<{
+				instance_id : string;
+				text        : string;
+			}>( 'instance-log', ( ( event ) => {
 				if ( !active ) return;
 
-                const { instance_id, text } = event.payload;
+				const { instance_id, text } = event.payload;
 
-                if ( !instanceLogs[ instance_id ] ) {
+				if ( !instanceLogs[ instance_id ] ) {
 					instanceLogs[ instance_id ] = '';
 				}
 
-                instanceLogs[ instance_id ] += text;
+				instanceLogs[ instance_id ] += text;
 
 				// Limit logs size to prevent memory leaks
 				if ( instanceLogs[ instance_id ].length > 40000 ) {
 					instanceLogs[ instance_id ] = instanceLogs[ instance_id ].slice( -20000 );
 				}
-			}));
+			} ) );
 
 			const uStatus = await listen<{
-                instance_id: string;
-                running: boolean;
-                exit_code: number | null
-            }>( 'instance-status', ( ( event ) => {
+				instance_id : string;
+				running     : boolean;
+				exit_code   : number | null;
+			}>( 'instance-status', ( ( event ) => {
 				if ( !active ) return;
 
-                const { instance_id, running } = event.payload;
+				const { instance_id, running } = event.payload;
 
-                runningStatuses[ instance_id ] = running;
-			}));
+				runningStatuses[ instance_id ] = running;
 
-			unlistenLog = uLog;
+				if ( !running ) {
+					delete instanceStats[ instance_id ];
+				}
+			} ) );
+
+			const uStats = await listen<{
+				instance_id  : string;
+				cpu          : number;
+				memory       : number;
+				total_memory : number;
+			}>( 'instance-stats', ( ( event ) => {
+				if ( !active ) return;
+
+				const { instance_id, cpu, memory, total_memory } = event.payload;
+
+				instanceStats[ instance_id ] = {
+					cpu,
+					memory,
+					total_memory,
+				};
+			} ) );
+
+			unlistenLog    = uLog;
 			unlistenStatus = uStatus;
+			unlistenStats  = uStats;
 		};
 
 		setupListeners();
@@ -107,8 +140,9 @@
 			active = false;
 			if ( unlistenLog ) unlistenLog();
 			if ( unlistenStatus ) unlistenStatus();
+			if ( unlistenStats ) unlistenStats();
 		};
-	});
+	} ) );
 
 	// Group instances by path reactively using Svelte 5 derived rune
 	let groupedInstances = $derived.by( () => {
@@ -465,16 +499,20 @@
 					<div class="flex items-center gap-3">
 						<button
 							onclick={ handleAddPathToSelectedProject }
-							class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-slate-600 text-slate-200 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+							class="px-2 sm:px-4 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-slate-600 text-slate-200 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
 						>
-							<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-							</svg>
-							Agregar Path
+                            <Plus class="size-4"/>
+
+                            <span class="hidden sm:flex">
+                                Agregar Path
+                            </span>
 						</button>
-						<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 select-none">
+
+                        <span class="inline-flex items-center gap-1.5 px-3 py-3 sm:py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 select-none">
 							<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-							Conectado
+                            <span class="hidden sm:flex">
+                                Conectado
+                            </span>
 						</span>
 					</div>
 				</div>
@@ -509,7 +547,11 @@
 										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
 									</svg>
 									<span class="text-xs font-mono text-slate-300 font-bold truncate pr-3">{ path }</span>
-									<span class="text-[10px] font-semibold bg-violet-500/10 text-violet-400 px-2 py-0.5 rounded-full border border-violet-500/20">{ instances.length } scripts</span>
+									<span class="text-[10px] font-semibold bg-violet-500/10 text-violet-400 px-2 py-0.5 rounded-full border border-violet-500/20 flex items-center gap-0.5">{ instances.length }
+                                        <span class="hidden sm:flex">
+                                            scripts
+                                        </span>
+                                    </span>
 								</div>
 
 								<button
@@ -519,7 +561,10 @@
 									<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
 									</svg>
-									Script Manual
+
+                                    <span class="hidden sm:flex">
+                                        Script Manual
+                                    </span>
 								</button>
 							</div>
 
@@ -529,6 +574,7 @@
 										{ instance }
 										{ activeLogInstanceId }
 										isRunning={ !!runningStatuses[ instance.id ] }
+										stats={ instanceStats[ instance.id ] }
 										onSelect={ ( ( id ) => activeLogInstanceId = id ) }
 										onDelete={ handleDeleteInstance }
 										onToggle={ toggleInstance }

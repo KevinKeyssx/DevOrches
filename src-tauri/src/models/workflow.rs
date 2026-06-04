@@ -12,30 +12,25 @@ pub struct Instance {
 }
 
 #[derive( Debug, Clone, Serialize, Deserialize )]
-pub struct WaitCondition {
-	pub port      : Option<u16>,
-	pub log_match : Option<String>,
-	pub delay_ms  : Option<u64>,
+pub struct CustomInstance {
+	pub name        : String,
+	pub path        : String,
+	pub script_name : String,
+	pub command     : String,
 }
 
 #[derive( Debug, Clone, Serialize, Deserialize )]
 pub struct WorkflowStep {
-	pub instance_id : String,
-	pub wait_for    : Option<WaitCondition>,
-}
-
-#[derive( Debug, Clone, Serialize, Deserialize )]
-pub struct WorkflowPhase {
-	pub name     : String,
-	pub parallel : bool,
-	pub steps    : Vec<WorkflowStep>,
+	pub name          : String,
+	pub path          : String,
+	pub script_name   : String,
+	pub fail_on_error : bool,
+	pub env           : Option<HashMap<String, String>>,
 }
 
 #[derive( Debug, Clone, Serialize, Deserialize )]
 pub struct Workflow {
-	pub version   : String,
-	pub name      : Option<String>,
-	pub env       : HashMap<String, String>,
-	pub instances : Vec<Instance>,
-	pub phases    : Vec<WorkflowPhase>,
+	pub name      : String,
+	pub instances : Option<Vec<CustomInstance>>,
+	pub steps     : Vec<WorkflowStep>,
 }

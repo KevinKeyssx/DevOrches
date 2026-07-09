@@ -5,6 +5,24 @@ use std::sync::RwLock;
 use tauri::{ AppHandle, Manager };
 use crate::models::project::Project;
 
+pub fn normalize_path( path_str: &str ) -> String {
+	let mut p = path_str.replace( '\\', "/" );
+	if p.len() >= 2 && p.as_bytes()[ 1 ] == b':' {
+		let drive = p.chars().next().unwrap().to_ascii_lowercase();
+		p = format!( "{}{}", drive, &p[ 1.. ] );
+	}
+	p
+}
+
+pub fn normalize_instance_id( id_str: &str ) -> String {
+	let parts: Vec<&str> = id_str.split( '#' ).collect();
+	if parts.len() == 2 {
+		format!( "{}#{}", normalize_path( parts[ 0 ] ), parts[ 1 ] )
+	} else {
+		normalize_path( id_str )
+	}
+}
+
 #[derive( Debug, serde::Serialize, serde::Deserialize, Clone )]
 pub struct AppDatabase {
 	pub projects : Vec<Project>,
@@ -38,8 +56,18 @@ impl DbState {
 			let file = File::open( &db_path )
 				.map_err( | err | format!( "No se pudo abrir db.json: {}", err ) )?;
 			let reader = BufReader::new( file );
-			serde_json::from_reader( reader )
-				.unwrap_or_else( | _ | AppDatabase::default() )
+			let mut db: AppDatabase = serde_json::from_reader( reader )
+				.unwrap_or_else( | _ | AppDatabase::default() );
+			for proj in &mut db.projects {
+				for inst in &mut proj.instances {
+					inst.path = normalize_path( &inst.path );
+					inst.id = normalize_instance_id( &inst.id );
+				}
+				for p in &mut proj.paths {
+					*p = normalize_path( p );
+				}
+			}
+			db
 		} else {
 			let db = AppDatabase::default();
 			let content = serde_json::to_string_pretty( &db )

@@ -21,11 +21,17 @@ pub struct CustomInstance {
 
 #[derive( Debug, Clone, Serialize, Deserialize )]
 pub struct WorkflowStep {
-	pub name          : String,
-	pub path          : String,
-	pub script_name   : String,
-	pub fail_on_error : bool,
-	pub env           : Option<HashMap<String, String>>,
+	pub name               : String,
+	pub path               : String,
+	pub script_name        : String,
+	pub fail_on_error      : bool,
+	#[serde( default = "default_background_delay" )]
+	pub background_delay   : u64,
+	pub env                : Option<HashMap<String, String>>,
+}
+
+fn default_background_delay() -> u64 {
+	0
 }
 
 #[derive( Debug, Clone, Serialize, Deserialize )]
@@ -34,3 +40,4 @@ pub struct Workflow {
 	pub instances : Option<Vec<CustomInstance>>,
 	pub steps     : Vec<WorkflowStep>,
 }
+

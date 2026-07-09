@@ -22,6 +22,9 @@
     } from '@lucide/svelte';
 
 	import type { Project, Workflow, WorkflowStep, CustomInstance } from '../lib/types';
+	import SoftSelect  from './shared/inputs/SoftSelect.svelte';
+	import Switch      from './shared/inputs/Switch.svelte';
+	import InputNumber from './shared/inputs/InputNumber.svelte';
 
 
     interface Props {
@@ -50,6 +53,13 @@
 	let steps                = $state<WorkflowStep[]>( [] );
 	let activeStepIndex      = $state<number | null>( null );
 	let stepStatuses         = $state<string[]>( [] ); // "pending", "running", "success", "failed"
+
+	// Reset active index when workflow stops
+	$effect( ( () => {
+		if ( !isWorkflowRunning ) {
+			activeStepIndex = null;
+		}
+	} ) );
 
 	// Synchronize external changes in currentWorkflow (from parent grid edit/delete) into local states
 	$effect( () => {
@@ -109,8 +119,7 @@
 	// Listeners for Tauri events
 	$effect( ( () => {
 		let active = true;
-		let unlistenStepStatus      : ( () => void ) | null = null;
-		let unlistenWorkflowStatus  : ( () => void ) | null = null;
+		let unlistenStepStatus : ( () => void ) | null = null;
 
 		const setup = async () => {
 			const uStep = await listen<{
@@ -139,31 +148,7 @@
 				}
 			}));
 
-			const uWorkflow = await listen<string>( 'workflow-status', ( ( event ) => {
-				if ( !active ) return;
-
-                isWorkflowRunning   = false;
-				activeStepIndex     = null;
-
-                const status = event.payload;
-
-                switch( status ) {
-                    case 'success': 
-                        showToast( 'Workflow completado con éxito.', 'success' );
-                    break;
-
-                    case 'cancelled':
-                        showToast( 'Workflow cancelado por el usuario.', 'info' );
-                    break;
-
-                    default:
-                        showToast( 'Workflow fallido.', 'error' );
-                    break;
-                }
-			}));
-
-			unlistenStepStatus      = uStep;
-			unlistenWorkflowStatus  = uWorkflow;
+			unlistenStepStatus = uStep;
 		};
 
 		setup();
@@ -171,7 +156,6 @@
 		return () => {
 			active = false;
 			if ( unlistenStepStatus ) unlistenStepStatus();
-			if ( unlistenWorkflowStatus ) unlistenWorkflowStatus();
 		};
 	} ) );
 
@@ -193,59 +177,134 @@
 	}
 
 
-    function getRelativePath( absPath: string, rootPath: string ) : string {
-		const abs   = absPath.replace( /\\/g, '/' );
-		const root  = rootPath.replace( /\\/g, '/' );
+	function normalizePath( path: string ) : string {
+		if ( !path ) return '';
+		let p = path.replace( /\\/g, '/' );
+		if ( p.match( /^[A-Za-z]:/ ) ) {
+			p = p.charAt( 0 ).toLowerCase() + p.slice( 1 );
+		}
+		return p;
+	}
 
-        if ( abs === root ) {
+	function getRelativePath( absPath: string, rootPath: string ) : string {
+		const abs  = normalizePath( absPath );
+		const root = normalizePath( rootPath );
+
+		if ( abs === root ) {
 			return '.';
 		}
 
-        if ( abs.startsWith( root ) ) {
+		if ( abs.startsWith( root ) ) {
 			let rel = abs.substring( root.length );
 
-            if ( rel.startsWith( '/' ) ) {
+			if ( rel.startsWith( '/' ) ) {
 				rel = rel.substring( 1 );
 			}
 
-            return `./${ rel }`;
+			return `./${ rel }`;
 		}
 
-        return abs;
+		return abs;
 	}
 
 	// Dynamic list of all available scripts (regular project scripts + custom instances)
 	let availableScripts = $derived.by( () => {
 		const list: { id: string; name: string; script_name: string; path: string; isCustom: boolean }[] = [];
 
+		if ( !project || !project.instances ) {
+			return list;
+		}
+
+		const rootPath = project.paths && project.paths[ 0 ] ? project.paths[ 0 ] : '';
+
 		// Project instances
 		for ( const inst of project.instances ) {
+			if ( !inst ) continue;
 			list.push( {
 				id          : inst.id,
-				name        : `${ inst.name } (${ getRelativePath( inst.path, project.paths[ 0 ] || '' ) })`,
+				name        : `${ inst.name } (${ normalizePath( inst.path ) })`,
 				script_name : inst.name,
-				path        : getRelativePath( inst.path, project.paths[ 0 ] || '' ),
+				path        : getRelativePath( inst.path, rootPath ),
 				isCustom    : false,
 			} );
 		}
 
 		// Custom instances in workflow
 		for ( const ci of customInstances ) {
-			const rootPath  = project.paths[ 0 ] || '';
+			if ( !ci ) continue;
 			const absPath   = joinPaths( rootPath, ci.path );
 			const id        = `${ absPath }#${ ci.script_name }`;
 
-            list.push({
+            list.push( {
 				id,
 				name        : `${ ci.name } [Manual: ${ ci.script_name }]`,
 				script_name : ci.script_name,
 				path        : ci.path,
 				isCustom    : true,
-			});
+			} );
 		}
 
 		return list;
-	});
+	} );
+
+	let hasActiveWorkflowProcesses = $derived.by( () => {
+		if ( !steps || steps.length === 0 || !project || !project.instances ) return false;
+		const rootPath = project.paths && project.paths[ 0 ] ? project.paths[ 0 ] : '';
+
+		function normPath( path: string ) : string {
+			if ( !path ) return '';
+			let p = path.replace( /\\/g, '/' );
+			if ( p.match( /^[A-Za-z]:/ ) ) {
+				p = p.charAt( 0 ).toLowerCase() + p.slice( 1 );
+			}
+			return p;
+		}
+
+		function normInstId( id: string ) : string {
+			if ( !id ) return '';
+			const parts = id.split( '#' );
+			if ( parts.length === 2 ) {
+				return `${ normPath( parts[ 0 ] ) }#${ parts[ 1 ] }`;
+			}
+			return normPath( id );
+		}
+
+		return steps.some( ( step ) => {
+			if ( !step.script_name ) return false;
+
+			// Find project instance
+			const relStepPath = step.path;
+			const inst = project.instances.find( ( i ) => {
+				const relInstPath = getRelativePath( i.path, rootPath );
+				return i.name === step.script_name && relInstPath === relStepPath;
+			} );
+
+			if ( inst ) {
+				const normId = normInstId( inst.id );
+				if ( runningStatuses[ normId ] ) {
+					return true;
+				}
+			}
+
+			// Find custom instance
+			if ( customInstances ) {
+				const ci = customInstances.find( ( c ) => {
+					return c.script_name === step.script_name && c.path === relStepPath;
+				} );
+				if ( ci ) {
+					const absPath = joinPaths( rootPath, ci.path );
+					const customId = normInstId( `${ absPath }#${ ci.script_name }` );
+					if ( runningStatuses[ customId ] ) {
+						return true;
+					}
+				}
+			}
+
+			// Fallback suffix match
+			const suffix = `#${ step.script_name }`;
+			return Object.entries( runningStatuses ).some( ( [ id, isRunning ] ) => id.endsWith( suffix ) && isRunning );
+		} );
+	} );
 
 	// Load workflow
 	async function loadWorkflow() : Promise<void> {
@@ -262,6 +321,10 @@
 				stepEnvTexts = {};
 
                 steps.forEach( ( step, idx ) => {
+					if ( step.background_delay === undefined ) {
+						step.background_delay = 0;
+					}
+
 					const envRecord = step.env || {};
 					const list      = Object.entries( envRecord ).map( ( [ k, v ] ) => ( { key : k, value : v } ) );
 
@@ -297,13 +360,14 @@
 			});
 
 			return {
-				name          : step.name,
-				path          : step.path,
-				script_name   : step.script_name,
-				fail_on_error : step.fail_on_error,
-				env           : Object.keys( envRecord ).length > 0 ? envRecord : null,
+				name             : step.name,
+				path             : step.path,
+				script_name      : step.script_name,
+				fail_on_error    : step.fail_on_error,
+				background_delay : step.background_delay !== undefined ? step.background_delay : 0,
+				env              : Object.keys( envRecord ).length > 0 ? envRecord : null,
 			};
-		});
+		} );
 
 		return {
 			name      : workflowName,
@@ -380,7 +444,7 @@
 		try {
 			const wf = buildWorkflowObject();
 
-            await invoke( 'abort_workflow', { workflow : wf } );
+            await invoke( 'abort_workflow', { projectId : project.id, workflow : wf } );
 
             showToast( 'Enviando señal de parada...', 'info' );
 		} catch ( err ) {
@@ -392,13 +456,14 @@
 	function addStep() : void {
 		const newIndex = steps.length;
 
-        steps.push({
-			name          : `Paso ${ newIndex + 1 }`,
-			path          : '.',
-			script_name   : '',
-			fail_on_error : true,
-			env           : null,
-		});
+        steps.push( {
+			name             : `Paso ${ newIndex + 1 }`,
+			path             : '.',
+			script_name      : '',
+			fail_on_error    : true,
+			background_delay : 0,
+			env              : null,
+		} );
 
         stepStatuses.push( 'pending' );
 
@@ -477,7 +542,7 @@
 
 	// Dropdown Selection Change
 	function handleScriptSelect( idx: number, scriptId: string ) : void {
-		const found = availableScripts.find( ( s ) => s.id === scriptId );
+		const found = ( availableScripts || [] ).find( ( s ) => s.id === scriptId );
 		if ( found ) {
 			steps[ idx ].script_name = found.script_name;
 			steps[ idx ].path = found.path;
@@ -620,7 +685,7 @@
 				Guardar
 			</button>
 
-			{#if isWorkflowRunning}
+			{#if ( isWorkflowRunning || hasActiveWorkflowProcesses ) }
 				<button
 					onclick={ abortWorkflow }
 					class="px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-lg shadow-red-600/15"
@@ -763,22 +828,33 @@
 							<!-- Controls -->
 							<div class="flex items-center gap-2 shrink-0">
 								<!-- Dropdown Selector of existing scripts -->
-								<select
-									value={ availableScripts.find( ( s ) => s.script_name === step.script_name && s.path === step.path )?.id || '' }
-									onchange={ ( ( e ) => handleScriptSelect( idx, ( e.target as HTMLSelectElement ).value ) ) }
-									class="bg-slate-950 border border-slate-800 text-slate-300 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-violet-500/40 w-full max-w-[200px]"
-								>
-									<option value="" disabled selected>Selecciona Script...</option>
-									{#each availableScripts as s}
-										<option value={ s.id }>{ s.name }</option>
-									{/each}
-								</select>
+								<div class="w-full max-w-[200px]">
+									<SoftSelect
+										options={ availableScripts }
+										value={ ( availableScripts || [] ).find( ( s ) => s.script_name === step.script_name && s.path === step.path )?.id || '' }
+										onchange={ ( val ) => handleScriptSelect( idx, val ) }
+										placeholder="Selecciona Script..."
+									/>
+								</div>
 
 								<!-- Checkbox fail on error -->
-								<label class="flex items-center gap-1.5 cursor-pointer bg-slate-950/40 border border-slate-800/80 px-3 py-1.5 rounded-xl hover:bg-slate-950/60 transition-colors">
-									<input type="checkbox" bind:checked={ step.fail_on_error } class="w-3.5 h-3.5 rounded border-slate-800 text-violet-600 focus:ring-violet-500 bg-slate-950" />
-									<span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider hidden sm:inline">Detener si falla</span>
-								</label>
+								<div class="flex items-center gap-2 bg-slate-950/40 border border-slate-800/80 px-3 py-1.5 rounded-xl hover:bg-slate-950/60 transition-colors">
+									<Switch bind:checked={ step.fail_on_error } showLabelText={ false } />
+									<span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider hidden sm:inline select-none whitespace-nowrap">Detener si falla</span>
+								</div>
+
+								<!-- Number input for background delay (only shown if not the last step) -->
+								{#if ( idx < steps.length - 1 ) }
+									<div class="flex items-center gap-2">
+										<span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider select-none whitespace-nowrap">Espera (s):</span>
+										<InputNumber
+											bind:value={ step.background_delay }
+											min={ 0 }
+											max={ 300 }
+											width="w-10"
+										/>
+									</div>
+								{/if}
 
 								<!-- Settings/Env variables button -->
 								<button

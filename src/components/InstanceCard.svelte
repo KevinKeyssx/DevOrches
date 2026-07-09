@@ -100,8 +100,10 @@
 
 		await onUpdateCommand( instance, editCommand );
 		isEditingCommand = false;
+	}
 
-        if ( !isRunning ) onToggle( instance )
+	function autofocus( node: HTMLInputElement ) {
+		node.focus();
 	}
 </script>
 
@@ -132,6 +134,7 @@
 				{#if isEditingName}
 					<div class="flex items-center gap-1.5 w-full mr-2">
 						<input
+							use:autofocus
 							type="text"
 							bind:value={ editName }
 							onclick={ ( ( e ) => e.stopPropagation() ) }
@@ -194,6 +197,7 @@
 			{#if isEditingCommand}
 				<div class="flex items-center gap-1.5 w-full mb-4">
 					<input
+						use:autofocus
 						type="text"
 						bind:value={ editCommand }
 						onclick={ ( ( e ) => e.stopPropagation() ) }
@@ -272,12 +276,13 @@
 		{/if}
 
         <button
+			disabled={ isEditingName || isEditingCommand }
 			onclick={ ( ( e ) => { e.stopPropagation(); onToggle( instance ); } ) }
 			class="px-3 py-1.5 {
                 isRunning
                 ? 'bg-red-600 hover:bg-red-500 shadow-red-600/10'
                 : 'bg-linear-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 shadow-violet-600/10'
-            } text-white text-xs font-bold rounded-xl transition-all shadow-lg hover:shadow-xl"
+            } text-white text-xs font-bold rounded-xl transition-all shadow-lg hover:shadow-xl disabled:opacity-30 disabled:pointer-events-none"
 		>
             {#if isRunning}
                 <Square class="size-4" />

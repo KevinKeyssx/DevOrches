@@ -13,10 +13,13 @@ use std::process::Stdio;
 
 use crate::models::project::Project;
 use crate::models::workflow::{ Instance, Workflow, WorkflowStep };
-use crate::storage::db::DbState;
+use crate::storage::db::{ DbState, normalize_path };
 
 pub struct ActiveProcess {
-	pub pid : u32,
+	pub pid       : u32,
+	pub is_docker : bool,
+	pub path      : String,
+	pub command   : String,
 }
 
 #[derive( Default )]
@@ -115,7 +118,8 @@ pub async fn detect_path_instances( path: &str ) -> Result<Vec<Instance>, String
 				};
 
 				let full_command = format!( "{} run {}", pm, name );
-				let unique_id = format!( "{}#{}", path, name );
+				let normalized_path = normalize_path( path );
+				let unique_id = format!( "{}#{}", normalized_path, name );
 
 				instances.push( Instance {
 					id      : unique_id,
@@ -123,7 +127,7 @@ pub async fn detect_path_instances( path: &str ) -> Result<Vec<Instance>, String
 					command : full_command,
 					cwd     : None,
 					env     : HashMap::new(),
-					path    : path.to_string(),
+					path    : normalized_path,
 				} );
 			}
 		}
@@ -240,6 +244,8 @@ pub async fn start_instance(
 		tokio_cmd.env( k, v );
 	}
 
+	let is_docker = command_str.contains( "docker compose" ) || command_str.contains( "docker-compose" );
+
 	let mut child = tokio_cmd.spawn()
 		.map_err( | err | format!( "No se pudo iniciar el comando: {}", err ) )?;
 
@@ -248,7 +254,12 @@ pub async fn start_instance(
 	{
 		let mut guard = state.active_processes.lock()
 			.map_err( | _ | "Error al bloquear el estado de procesos" )?;
-		guard.insert( instance_id.clone(), ActiveProcess { pid } );
+		guard.insert( instance_id.clone(), ActiveProcess {
+			pid,
+			is_docker,
+			path    : path_str.clone(),
+			command : command_str.clone(),
+		} );
 	}
 
 	let _ = app.emit( "instance-status", StatusPayload {
@@ -332,6 +343,32 @@ pub async fn stop_instance(
 		.map_err( | _ | "Error de concurrencia al acceder al estado de procesos" )?;
 
 	if let Some( proc ) = guard.remove( &instance_id ) {
+		if proc.is_docker {
+			let docker_bin = if proc.command.contains( "docker-compose" ) {
+				"docker-compose"
+			} else {
+				"docker"
+			};
+			let args = if docker_bin == "docker" {
+				vec![ "compose", "stop" ]
+			} else {
+				vec![ "stop" ]
+			};
+
+			let mut cmd = if cfg!( windows ) {
+				let mut c = std::process::Command::new( "cmd" );
+				let cmd_str = format!( "{} {}", docker_bin, args.join( " " ) );
+				c.args( &[ "/C", &cmd_str ] );
+				c
+			} else {
+				let mut c = std::process::Command::new( docker_bin );
+				c.args( &args );
+				c
+			};
+			cmd.current_dir( &proc.path );
+			let _ = cmd.spawn();
+		}
+
 		if cfg!( windows ) {
 			let mut kill_cmd = std::process::Command::new( "taskkill" );
 			kill_cmd.args( &[ "/F", "/T", "/PID", &proc.pid.to_string() ] );
@@ -388,14 +425,15 @@ pub async fn add_manual_instance(
 		return Err( "El nombre y el comando no pueden estar vacíos".to_string() );
 	}
 
-	let unique_id = format!( "{}#{}", path, name );
+	let normalized_path = normalize_path( &path );
+	let unique_id = format!( "{}#{}", normalized_path, name );
 	let new_instance = Instance {
 		id      : unique_id,
 		name,
 		command,
 		cwd     : None,
 		env     : HashMap::new(),
-		path    : path.clone(),
+		path    : normalized_path,
 	};
 
 	{
@@ -568,7 +606,7 @@ pub async fn delete_project( state: State<'_, DbState>, id: String ) -> Result<(
 }
 
 fn normalize_to_unix_path( path_str: &str ) -> String {
-	path_str.replace( '\\', "/" )
+	normalize_path( path_str )
 }
 
 fn normalize_workflow_paths( mut workflow: Workflow ) -> Workflow {
@@ -757,11 +795,12 @@ pub struct WorkflowStatusPayload {
 }
 
 pub async fn execute_step_process(
-	app         : tauri::AppHandle,
-	project_id  : &str,
-	step        : &WorkflowStep,
-	env_context : &HashMap<String, String>,
-	workflow    : &Workflow,
+	app          : tauri::AppHandle,
+	project_id   : &str,
+	step         : &WorkflowStep,
+	env_context  : &HashMap<String, String>,
+	workflow     : &Workflow,
+	is_last_step : bool,
 ) -> Result<Option<i32>, String> {
 	let state = app.state::<ProcessState>();
 	let db_state = app.state::<DbState>();
@@ -787,7 +826,8 @@ pub async fn execute_step_process(
 			if let Some( ci ) = custom_instances.iter().find( | ci | {
 				ci.script_name == step.script_name && paths_are_equivalent( &target_abs_str, &std::path::Path::new( root_path ).join( &ci.path ).to_string_lossy() )
 			} ) {
-				resolved = Some( ( ci.command.clone(), target_abs_str.clone() ) );
+				let custom_id = format!( "{}#{}", target_abs_str, ci.script_name );
+				resolved = Some( ( ci.command.clone(), target_abs_str.clone(), custom_id ) );
 			}
 		}
 
@@ -795,12 +835,11 @@ pub async fn execute_step_process(
 			if let Some( inst ) = project.instances.iter().find( | i | {
 				i.name == step.script_name && paths_are_equivalent( &i.path, &target_abs_str )
 			} ) {
-				resolved = Some( ( inst.command.clone(), inst.path.clone() ) );
+				resolved = Some( ( inst.command.clone(), inst.path.clone(), inst.id.clone() ) );
 			}
 		}
 
-		let ( cmd, path ) = resolved.ok_or_else( || format!( "No se encontró el comando para el script '{}' en '{}'", step.script_name, step.path ) )?;
-		let inst_id = format!( "{}#{}", path, step.script_name );
+		let ( cmd, path, inst_id ) = resolved.ok_or_else( || format!( "No se encontró el comando para el script '{}' en '{}'", step.script_name, step.path ) )?;
 
 		( cmd, path, inst_id )
 	};
@@ -831,6 +870,8 @@ pub async fn execute_step_process(
 		tokio_cmd.env( k, v );
 	}
 
+	let is_docker = command_str.contains( "docker compose" ) || command_str.contains( "docker-compose" );
+
 	let mut child = tokio_cmd.spawn()
 		.map_err( | err | format!( "No se pudo iniciar el comando: {}", err ) )?;
 
@@ -839,7 +880,12 @@ pub async fn execute_step_process(
 	{
 		let mut guard = state.active_processes.lock()
 			.map_err( | _ | "Error al bloquear el estado de procesos" )?;
-		guard.insert( instance_id.clone(), ActiveProcess { pid } );
+		guard.insert( instance_id.clone(), ActiveProcess {
+			pid,
+			is_docker,
+			path    : path_str.clone(),
+			command : command_str.clone(),
+		} );
 	}
 
 	let _ = app.emit( "instance-status", StatusPayload {
@@ -891,31 +937,112 @@ pub async fn execute_step_process(
 		}
 	} );
 
-	let exit_status = child.wait().await;
+	let active_processes_clone = state.active_processes.clone();
+	let app_monitor = app.clone();
+	let inst_id_monitor = instance_id.clone();
+	let is_background = step.background_delay > 0 && !is_last_step;
 
-	{
-		if let Ok( mut guard ) = state.active_processes.lock() {
-			guard.remove( &instance_id );
+	if is_background {
+		let exit_code_shared = Arc::new( Mutex::new( None ) );
+		let exit_code_clone = exit_code_shared.clone();
+
+		// Spawn a background task to wait for the child and clean it up when it exits
+		tokio::spawn( async move {
+			let exit_status = child.wait().await;
+			let code = exit_status.ok().and_then( | s | s.code() );
+			{
+				if let Ok( mut val ) = exit_code_clone.lock() {
+					*val = Some( code.unwrap_or( -1 ) );
+				}
+			}
+			{
+				if let Ok( mut guard ) = active_processes_clone.lock() {
+					guard.remove( &inst_id_monitor );
+				}
+			}
+			let _ = app_monitor.emit( "instance-status", StatusPayload {
+				instance_id : inst_id_monitor,
+				running     : false,
+				exit_code   : code,
+			} );
+		} );
+
+		// Wait the user-configured number of seconds to let the background service spin up
+		tokio::time::sleep( tokio::time::Duration::from_secs( step.background_delay ) ).await;
+
+		// Check if it's still running
+		let still_running = {
+			if let Ok( guard ) = state.active_processes.lock() {
+				guard.contains_key( &instance_id )
+			} else {
+				false
+			}
+		};
+
+		if still_running {
+			Ok( Some( 0 ) ) // Success, proceed to next step
+		} else {
+			let exit_code = {
+				if let Ok( val ) = exit_code_shared.lock() {
+					*val
+				} else {
+					None
+				}
+			};
+
+			match exit_code {
+				Some( 0 )    => Ok( Some( 0 ) ), // Exited successfully (e.g. docker compose up -d)
+				Some( code ) => Err( format!( "El proceso finalizó con código de error: {}", code ) ),
+				None         => Err( "El proceso en segundo plano terminó antes de tiempo sin reportar código".to_string() ),
+			}
 		}
+	} else if is_last_step {
+		// Last step: spawn detached — don't block the workflow.
+		// The background monitor will emit running: false when the process actually exits.
+		tokio::spawn( async move {
+			let exit_status = child.wait().await;
+			let code = exit_status.ok().and_then( | s | s.code() );
+			{
+				if let Ok( mut guard ) = active_processes_clone.lock() {
+					guard.remove( &inst_id_monitor );
+				}
+			}
+			let _ = app_monitor.emit( "instance-status", StatusPayload {
+				instance_id : inst_id_monitor,
+				running     : false,
+				exit_code   : code,
+			} );
+		} );
+
+		Ok( Some( 0 ) )
+	} else {
+		// Normal sequential execution: wait for it to exit
+		let exit_status = child.wait().await;
+
+		{
+			if let Ok( mut guard ) = state.active_processes.lock() {
+				guard.remove( &instance_id );
+			}
+		}
+
+		let code = exit_status.ok().and_then( | s | s.code() );
+		let _ = app.emit( "instance-status", StatusPayload {
+			instance_id : instance_id.clone(),
+			running     : false,
+			exit_code   : code,
+		} );
+
+		Ok( code )
 	}
-
-	let code = exit_status.ok().and_then( | s | s.code() );
-	let _ = app.emit( "instance-status", StatusPayload {
-		instance_id : instance_id.clone(),
-		running     : false,
-		exit_code   : code,
-	} );
-
-	Ok( code )
 }
 
 #[tauri::command]
 pub async fn run_workflow(
-	app        : tauri::AppHandle,
-	state      : State<'_, ProcessState>,
-	db_state   : State<'_, DbState>,
-	project_id : String,
-	workflow   : Workflow,
+	app         : tauri::AppHandle,
+	state       : State<'_, ProcessState>,
+	_db_state   : State<'_, DbState>,
+	project_id  : String,
+	workflow    : Workflow,
 ) -> Result<(), String> {
 	state.workflow_cancelled.store( false, std::sync::atomic::Ordering::SeqCst );
 
@@ -941,12 +1068,14 @@ pub async fn run_workflow(
 				}
 			}
 
+			let is_last_step = index == workflow.steps.len() - 1;
 			let run_result = execute_step_process(
 				app.clone(),
 				&project_id,
 				step,
 				&env_context,
 				&workflow,
+				is_last_step,
 			).await;
 
 			match run_result {
@@ -960,6 +1089,11 @@ pub async fn run_workflow(
 						exit_code,
 					} );
 
+					if !success && process_state.workflow_cancelled.load( std::sync::atomic::Ordering::SeqCst ) {
+						let _ = app.emit( "workflow-status", "cancelled".to_string() );
+						return;
+					}
+
 					if !success && step.fail_on_error {
 						let _ = app.emit( "workflow-status", "failed".to_string() );
 						return;
@@ -971,6 +1105,11 @@ pub async fn run_workflow(
 						status     : "failed".to_string(),
 						exit_code  : None,
 					} );
+
+					if process_state.workflow_cancelled.load( std::sync::atomic::Ordering::SeqCst ) {
+						let _ = app.emit( "workflow-status", "cancelled".to_string() );
+						return;
+					}
 
 					if step.fail_on_error {
 						let _ = app.emit( "workflow-status", "failed".to_string() );
@@ -992,30 +1131,91 @@ pub async fn run_workflow(
 
 #[tauri::command]
 pub async fn abort_workflow(
-	state    : State<'_, ProcessState>,
-	workflow : Workflow,
+	state      : State<'_, ProcessState>,
+	db_state   : State<'_, DbState>,
+	project_id : String,
+	workflow   : Workflow,
 ) -> Result<(), String> {
 	state.workflow_cancelled.store( true, std::sync::atomic::Ordering::SeqCst );
 
 	let mut guard = state.active_processes.lock()
 		.map_err( | _ | "Error de concurrencia al acceder al estado de procesos" )?;
 
+	let ( root_path, project_instances ) = {
+		let data_guard = db_state.data.read()
+			.map_err( | _ | "Error de concurrencia al leer la base de datos" )?;
+		let project = data_guard.projects.iter().find( | p | p.id == project_id )
+			.ok_or_else( || "No se encontró el proyecto especificado".to_string() )?;
+		let root = project.paths.get( 0 ).cloned().unwrap_or_default();
+		( root, project.instances.clone() )
+	};
+
 	for step in &workflow.steps {
+		let mut target_ids = Vec::new();
+		let target_abs_path = std::path::Path::new( &root_path ).join( &step.path );
+		let target_abs_str = target_abs_path.to_string_lossy().to_string();
+
+		if let Some( inst ) = project_instances.iter().find( | i | {
+			i.name == step.script_name && paths_are_equivalent( &i.path, &target_abs_str )
+		} ) {
+			target_ids.push( inst.id.clone() );
+		} else {
+			if let Some( ref custom_instances ) = workflow.instances {
+				if let Some( ci ) = custom_instances.iter().find( | ci | {
+					ci.script_name == step.script_name && paths_are_equivalent( &target_abs_str, &std::path::Path::new( &root_path ).join( &ci.path ).to_string_lossy() )
+				} ) {
+					target_ids.push( format!( "{}#{}", target_abs_str, ci.script_name ) );
+				}
+			}
+		}
+
 		let suffix = format!( "#{}", step.script_name );
-		let pids_to_kill: Vec<( String, u32 )> = guard.iter()
-			.filter( | ( id, _ ) | id.ends_with( &suffix ) )
-			.map( | ( id, proc ) | ( id.clone(), proc.pid ) )
+
+		let targets_to_kill: Vec<( String, ActiveProcess )> = guard.iter()
+			.filter( | ( id, _ ) | target_ids.contains( id ) || id.ends_with( &suffix ) )
+			.map( | ( id, proc ) | ( id.clone(), ActiveProcess {
+				pid       : proc.pid,
+				is_docker : proc.is_docker,
+				path      : proc.path.clone(),
+				command   : proc.command.clone(),
+			} ) )
 			.collect();
 
-		for ( id, pid ) in pids_to_kill {
+		for ( id, proc ) in targets_to_kill {
 			guard.remove( &id );
+			if proc.is_docker {
+				let docker_bin = if proc.command.contains( "docker-compose" ) {
+					"docker-compose"
+				} else {
+					"docker"
+				};
+				let args = if docker_bin == "docker" {
+					vec![ "compose", "stop" ]
+				} else {
+					vec![ "stop" ]
+				};
+
+				let mut cmd = if cfg!( windows ) {
+					let mut c = std::process::Command::new( "cmd" );
+					let cmd_str = format!( "{} {}", docker_bin, args.join( " " ) );
+					c.args( &[ "/C", &cmd_str ] );
+					c
+				} else {
+					let mut c = std::process::Command::new( docker_bin );
+					c.args( &args );
+					c
+				};
+				cmd.current_dir( &proc.path );
+				let _ = cmd.spawn();
+			}
+
 			if cfg!( windows ) {
 				let mut kill_cmd = std::process::Command::new( "taskkill" );
-				kill_cmd.args( &[ "/F", "/T", "/PID", &pid.to_string() ] );
+				kill_cmd.args( &[ "/F", "/T", "/PID", &proc.pid.to_string() ] );
 				let _ = kill_cmd.spawn();
 			} else {
 				let mut kill_cmd = std::process::Command::new( "kill" );
-				kill_cmd.args( &[ "-9", &pid.to_string() ] );
+				kill_cmd.args( &[ "-9", &proc.pid.to_string() ] );
 				let _ = kill_cmd.spawn();
 			}
 		}

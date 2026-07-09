@@ -2,6 +2,8 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 
+    import { slide }    from 'svelte/transition';
+
     import {
         ChevronDown,
         Folder,
@@ -9,18 +11,22 @@
         Terminal,
         Workflow as WorkflowIcon
     }                   from '@lucide/svelte';
-	import { slide }    from 'svelte/transition';
+    import { Toaster }  from 'svelte-french-toast';
 
     import type {
 		Project,
 		Instance,
 		Workflow
-	}                      from './lib/types';
-	import InstanceCard    from './components/InstanceCard.svelte';
-	import Console         from './components/Console.svelte';
-	import Sidebar         from './components/Sidebar.svelte';
-	import LogViewer       from './components/LogViewer.svelte';
-	import WorkflowSection from './components/WorkflowSection.svelte';
+	}                       from './lib/types';
+	import {
+        showToast,
+        toastOptions
+    }                       from './config/toastConfig';
+	import InstanceCard     from './components/InstanceCard.svelte';
+	import Console          from './components/Console.svelte';
+	import Sidebar          from './components/Sidebar.svelte';
+	import LogViewer        from './components/LogViewer.svelte';
+	import WorkflowSection  from './components/WorkflowSection.svelte';
 
 	// Detección de ventana secundaria de log viewer
 	const urlParams     = new URLSearchParams( window.location.search );
@@ -69,11 +75,6 @@
 	let newManualName       = $state( '' );
 	let newManualCommand    = $state( '' );
 
-	// Toast Alert State
-	let toastMessage    = $state( '' );
-	let toastType       = $state<'info' | 'error' | 'success'>( 'info' );
-
-    let toastTimeout: any = null;
 	let projectsCollapsedPaths = $state<Record<string, boolean>>( {} );
 
 	$effect( () => {
@@ -84,9 +85,10 @@
 	$effect( ( () => {
 		let active = true;
 
-		let unlistenLog    : ( () => void ) | null = null;
-		let unlistenStatus : ( () => void ) | null = null;
-		let unlistenStats  : ( () => void ) | null = null;
+		let unlistenLog      : ( () => void ) | null = null;
+		let unlistenStatus   : ( () => void ) | null = null;
+		let unlistenStats    : ( () => void ) | null = null;
+		let unlistenWorkflow : ( () => void ) | null = null;
 
 		const setupListeners = async () => {
 			const uLog = await listen<{
@@ -96,16 +98,17 @@
 				if ( !active ) return;
 
 				const { instance_id, text } = event.payload;
+				const normId = normalizeInstanceId( instance_id );
 
-				if ( !instanceLogs[ instance_id ] ) {
-					instanceLogs[ instance_id ] = '';
+				if ( !instanceLogs[ normId ] ) {
+					instanceLogs[ normId ] = '';
 				}
 
-				instanceLogs[ instance_id ] += text;
+				instanceLogs[ normId ] += text;
 
 				// Limit logs size to prevent memory leaks
-				if ( instanceLogs[ instance_id ].length > 40000 ) {
-					instanceLogs[ instance_id ] = instanceLogs[ instance_id ].slice( -20000 );
+				if ( instanceLogs[ normId ].length > 40000 ) {
+					instanceLogs[ normId ] = instanceLogs[ normId ].slice( -20000 );
 				}
 			} ) );
 
@@ -117,11 +120,12 @@
 				if ( !active ) return;
 
 				const { instance_id, running } = event.payload;
+				const normId = normalizeInstanceId( instance_id );
 
-				runningStatuses[ instance_id ] = running;
+				runningStatuses[ normId ] = running;
 
 				if ( !running ) {
-					delete instanceStats[ instance_id ];
+					delete instanceStats[ normId ];
 				}
 			} ) );
 
@@ -134,17 +138,39 @@
 				if ( !active ) return;
 
 				const { instance_id, cpu, memory, total_memory } = event.payload;
+				const normId = normalizeInstanceId( instance_id );
 
-				instanceStats[ instance_id ] = {
+				instanceStats[ normId ] = {
 					cpu,
 					memory,
 					total_memory,
 				};
-			} ) );
+			}));
 
-			unlistenLog    = uLog;
-			unlistenStatus = uStatus;
-			unlistenStats  = uStats;
+			const uWorkflow = await listen<string>( 'workflow-status', ( ( event ) => {
+				if ( !active ) return;
+
+				isWorkflowRunning = false;
+
+				const status = event.payload;
+
+				switch ( status ) {
+					case 'success':
+						showToast( 'Workflow completado con éxito.', 'success' );
+						break;
+					case 'cancelled':
+						showToast( 'Workflow cancelado por el usuario.', 'info' );
+						break;
+					default:
+						showToast( 'Workflow fallido.', 'error' );
+						break;
+				}
+			}));
+
+			unlistenLog      = uLog;
+			unlistenStatus   = uStatus;
+			unlistenStats    = uStats;
+			unlistenWorkflow = uWorkflow;
 		};
 
 		setupListeners();
@@ -154,8 +180,48 @@
 			if ( unlistenLog ) unlistenLog();
 			if ( unlistenStatus ) unlistenStatus();
 			if ( unlistenStats ) unlistenStats();
+			if ( unlistenWorkflow ) unlistenWorkflow();
 		};
 	} ) );
+
+	function normalizePath( path: string ) : string {
+		if ( !path ) return '';
+		let p = path.replace( /\\/g, '/' );
+		if ( p.match( /^[A-Za-z]:/ ) ) {
+			p = p.charAt( 0 ).toLowerCase() + p.slice( 1 );
+		}
+		return p;
+	}
+
+	function normalizeInstanceId( id: string ) : string {
+		if ( !id ) return '';
+		const parts = id.split( '#' );
+		if ( parts.length === 2 ) {
+			return `${ normalizePath( parts[ 0 ] ) }#${ parts[ 1 ] }`;
+		}
+		return normalizePath( id );
+	}
+
+	function getRelativePath( absPath: string, rootPath: string ) : string {
+		const abs  = absPath.replace( /\\/g, '/' );
+		const root = rootPath.replace( /\\/g, '/' );
+
+		if ( abs === root ) {
+			return '.';
+		}
+
+		if ( abs.startsWith( root ) ) {
+			let rel = abs.substring( root.length );
+
+			if ( rel.startsWith( '/' ) ) {
+				rel = rel.substring( 1 );
+			}
+
+			return `./${ rel }`;
+		}
+
+		return abs;
+	}
 
 	function joinPaths( root: string, rel: string ) : string {
 		const r = root.replace( /\\/g, '/' );
@@ -182,24 +248,28 @@
 
 		for ( const inst of projectInstances ) {
 			if ( !inst || !inst.path ) continue;
-			if ( !groups[ inst.path ] ) {
-				groups[ inst.path ] = [];
+			const normPath = normalizePath( inst.path );
+			const normId   = normalizeInstanceId( inst.id );
+			if ( !groups[ normPath ] ) {
+				groups[ normPath ] = [];
 			}
 
-			groups[ inst.path ].push( {
+			groups[ normPath ].push( {
 				...inst,
+				id       : normId,
+				path     : normPath,
 				isCustom : false,
 			} );
 		}
 
-		if ( currentWorkflow && Array.isArray( currentWorkflow.instances ) ) {
+		if ( currentWorkflow && Array.isArray( currentWorkflow?.instances ) ) {
 			const rootPath = selectedProject.paths && selectedProject.paths[ 0 ] ? selectedProject.paths[ 0 ] : '';
 
-            for ( const ci of currentWorkflow.instances ) {
+            for ( const ci of ( currentWorkflow?.instances || [] ) ) {
 				if ( !ci || !ci.path ) continue;
 
-                const absPath   = joinPaths( rootPath, ci.path );
-				const id        = `${ absPath }#${ ci.script_name }`;
+                const absPath   = normalizePath( joinPaths( rootPath, ci.path ) );
+				const id        = normalizeInstanceId( `${ absPath }#${ ci.script_name }` );
 
 				if ( !groups[ absPath ] ) {
 					groups[ absPath ] = [];
@@ -207,7 +277,7 @@
 
 				if ( !groups[ absPath ].some( ( inst ) => inst.id === id ) ) {
 					groups[ absPath ].push( {
-						id,
+						id       : id,
 						name     : ci.name || ci.script_name,
 						command  : ci.command,
 						cwd      : null,
@@ -223,18 +293,7 @@
 	}));
 
 
-    function showToast( msg: string, type: 'info' | 'error' | 'success' = 'info' ): void {
-		toastMessage    = msg;
-		toastType       = type;
 
-        if ( toastTimeout ) {
-			clearTimeout( toastTimeout );
-		}
-
-        toastTimeout = setTimeout(( () => {
-			toastMessage = '';
-		}), 4000 );
-	}
 
 
     async function loadProjects() : Promise<void> {
@@ -483,7 +542,10 @@
             return;
 		}
 
-        try {
+        const originalInst = selectedProject.instances.find( ( i ) => normalizeInstanceId( i.id ) === inst.id );
+		const oldName = originalInst ? originalInst.name : '';
+
+		try {
 			await invoke( 'update_instance', {
 				projectId  : selectedProject.id,
 				instanceId : inst.id,
@@ -491,8 +553,35 @@
 				newCommand : inst.command,
 			});
 
-			inst.name = newName;
-			selectedProject = { ...selectedProject };
+			if ( originalInst ) {
+				originalInst.name = newName;
+			}
+
+			// Update any workflow steps referencing this script name
+			if ( oldName && originalInst && currentWorkflow && currentWorkflow.steps ) {
+				const rootPath = selectedProject.paths && selectedProject.paths[ 0 ] ? selectedProject.paths[ 0 ] : '';
+				const relInstPath = getRelativePath( originalInst.path, rootPath );
+				let workflowChanged = false;
+
+				for ( const step of currentWorkflow.steps ) {
+					if ( step.script_name === oldName && step.path === relInstPath ) {
+						step.script_name = newName;
+						step.name = `Ejecutar ${ newName } en ${ step.path }`;
+						workflowChanged = true;
+					}
+				}
+
+				if ( workflowChanged ) {
+					currentWorkflow = { ...currentWorkflow, steps : [ ...currentWorkflow.steps ] };
+					try {
+						await invoke( 'save_workflow', { projectId : selectedProject.id, workflow : currentWorkflow } );
+					} catch ( err ) {
+						showToast( `Error al auto-guardar workflow modificado: ${ err }`, 'error' );
+					}
+				}
+			}
+
+			selectedProject = { ...selectedProject, instances : [ ...selectedProject.instances ] };
 			projects = projects.map( ( p ) => p.id === selectedProject!.id ? selectedProject! : p );
 
             showToast( 'Nombre del script actualizado.', 'success' );
@@ -543,9 +632,13 @@
 				newCommand,
 			});
 
-			inst.command = newCommand;
+			const originalInst = selectedProject.instances.find( ( i ) => normalizeInstanceId( i.id ) === inst.id );
 
-            selectedProject = { ...selectedProject };
+			if ( originalInst ) {
+				originalInst.command = newCommand;
+			}
+
+			selectedProject = { ...selectedProject, instances : [ ...selectedProject.instances ] };
 			projects = projects.map( ( p ) => p.id === selectedProject!.id ? selectedProject! : p );
 
             showToast( 'Comando del script actualizado.', 'success' );
@@ -620,6 +713,8 @@
 	}
 </script>
 
+<Toaster position={ toastOptions.position } />
+
 {#if logViewerData}
 	<LogViewer
 		instanceName={ logViewerData.instanceName }
@@ -627,23 +722,6 @@
 	/>
 {:else}
 <main class="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 font-sans">
-	<!-- Toast Notification -->
-	{#if toastMessage}
-		<div class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
-			<div class="px-5 py-3 rounded-2xl border text-sm font-semibold flex items-center gap-3 shadow-2xl backdrop-blur-md animate-scale-up pointer-events-auto { toastType === 'error' ? 'bg-red-950/80 border-red-500/30 text-red-200' : toastType === 'success' ? 'bg-emerald-950/80 border-emerald-500/30 text-emerald-200' : 'bg-slate-900/90 border-slate-800 text-slate-200' }">
-				{#if toastType === 'error'}
-					<span class="w-2 h-2 rounded-full bg-red-500"></span>
-				{:else if toastType === 'success'}
-					<span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-				{:else}
-					<span class="w-2 h-2 rounded-full bg-violet-500"></span>
-				{/if}
-
-                { toastMessage }
-			</div>
-		</div>
-	{/if}
-
 	<!-- Sidebar -->
 	<Sidebar
 		{ projects }
@@ -848,7 +926,7 @@
 							</div>
 						{/each}
 
-						{#if (( selectedProject?.instances ) || [] ).length === 0 && ( !currentWorkflow || !Array.isArray( currentWorkflow.instances ) || currentWorkflow.instances.length === 0 )}
+						{#if ( ( ( selectedProject?.instances ) || [] ).length === 0 && ( !currentWorkflow || !Array.isArray( currentWorkflow?.instances ) || ( currentWorkflow?.instances || [] ).length === 0 ) ) }
 							<div class="bg-slate-900 border border-dashed border-slate-800 rounded-2xl p-8 text-center select-none">
 								<p class="text-sm text-slate-500 font-medium">No hay instancias registradas en este proyecto.</p>
 							</div>
@@ -1006,6 +1084,18 @@
 	}
 	:global(.animate-scale-up) {
 		animation: scaleUp 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+	}
+
+	:global( .toaster ) {
+		bottom : 16px !important;
+		left   : auto !important;
+		right  : 16px !important;
+		top    : auto !important;
+		width  : 350px !important;
+	}
+
+	:global( .toaster .wrapper ) {
+		justify-content : flex-end !important;
 	}
 
 	:global( * ) {

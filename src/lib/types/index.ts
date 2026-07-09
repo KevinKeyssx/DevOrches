@@ -25,11 +25,12 @@ export interface CustomInstance {
 }
 
 export interface WorkflowStep {
-	name          : string;
-	path          : string;
-	script_name   : string;
-	fail_on_error : boolean;
-	env           : Record<string, string> | null;
+	name               : string;
+	path               : string;
+	script_name        : string;
+	fail_on_error      : boolean;
+	background_delay?  : number;
+	env                : Record<string, string> | null;
 }
 
 export interface Workflow {

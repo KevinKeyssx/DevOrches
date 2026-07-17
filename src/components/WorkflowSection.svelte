@@ -21,10 +21,15 @@
         FileText
     } from '@lucide/svelte';
 
-	import type { Project, Workflow, WorkflowStep, CustomInstance } from '../lib/types';
-	import SoftSelect  from './shared/inputs/SoftSelect.svelte';
-	import Switch      from './shared/inputs/Switch.svelte';
-	import InputNumber from './shared/inputs/InputNumber.svelte';
+	import type {
+        Project,
+        Workflow,
+        WorkflowStep,
+        CustomInstance
+    }                   from '../lib/types';
+	import SoftSelect   from './shared/inputs/SoftSelect.svelte';
+	import Switch       from './shared/inputs/Switch.svelte';
+	import InputNumber  from './shared/inputs/InputNumber.svelte';
 
 
     interface Props {
@@ -35,6 +40,7 @@
 		showToast           : ( msg: string, type: 'info' | 'error' | 'success' ) => void;
 		currentWorkflow     : Workflow | null;
 		isWorkflowRunning   : boolean;
+		isSidebarCollapsed  : boolean;
 	}
 
 	let {
@@ -44,22 +50,31 @@
 		onSelectInstance,
 		showToast,
 		currentWorkflow = $bindable(),
-		isWorkflowRunning = $bindable( false )
+		isWorkflowRunning = $bindable( false ),
+		isSidebarCollapsed = true
 	}: Props = $props();
 
 
-    let workflowName         = $state( 'Flujo Secuencial' );
-	let customInstances      = $state<CustomInstance[]>( [] );
-	let steps                = $state<WorkflowStep[]>( [] );
-	let activeStepIndex      = $state<number | null>( null );
-	let stepStatuses         = $state<string[]>( [] ); // "pending", "running", "success", "failed"
+	let windowWidth              = $state( typeof window !== 'undefined' ? window.innerWidth : 1280 );
+	let isMdViewport             = $derived( windowWidth >= 768 && windowWidth < 1024 );
+	let isLgViewport             = $derived( windowWidth >= 1024 );
+	let forceMd                  = $derived( !isSidebarCollapsed && windowWidth >= 1280 && windowWidth < 1440 );
+	let showTitleDeleteButton    = $derived( forceMd || isMdViewport );
+	let showControlsDeleteButton = $derived( !showTitleDeleteButton );
+
+
+    let workflowName    = $state( 'Flujo Secuencial' );
+	let customInstances = $state<CustomInstance[]>( [] );
+	let steps           = $state<WorkflowStep[]>( [] );
+	let activeStepIndex = $state<number | null>( null );
+	let stepStatuses    = $state<string[]>( [] ); // "pending", "running", "success", "failed"
 
 	// Reset active index when workflow stops
 	$effect( ( () => {
 		if ( !isWorkflowRunning ) {
 			activeStepIndex = null;
 		}
-	} ) );
+	}));
 
 	// Synchronize external changes in currentWorkflow (from parent grid edit/delete) into local states
 	$effect( () => {
@@ -106,10 +121,10 @@
 		value : string;
 	}
 
-	let expandedStepIndex    = $state<number | null>( null );
-	let activeEnvTabs        = $state<Record<number, 'form' | 'text'>>( {} );
-	let stepEnvLists         = $state<Record<number, EnvPair[]>>( {} );
-	let stepEnvTexts         = $state<Record<number, string>>( {} );
+	let expandedStepIndex   = $state<number | null>( null );
+	let activeEnvTabs       = $state<Record<number, 'form' | 'text'>>( {} );
+	let stepEnvLists        = $state<Record<number, EnvPair[]>>( {} );
+	let stepEnvTexts        = $state<Record<number, string>>( {} );
 
 	// Load workflow on startup or project change
 	$effect( ( () => {
@@ -155,9 +170,10 @@
 
 		return () => {
 			active = false;
-			if ( unlistenStepStatus ) unlistenStepStatus();
+	
+            if ( unlistenStepStatus ) unlistenStepStatus();
 		};
-	} ) );
+	}));
 
 	// Helpers
 	function joinPaths( root: string, rel: string ) : string {
@@ -179,14 +195,18 @@
 
 	function normalizePath( path: string ) : string {
 		if ( !path ) return '';
-		let p = path.replace( /\\/g, '/' );
-		if ( p.match( /^[A-Za-z]:/ ) ) {
+
+        let p = path.replace( /\\/g, '/' );
+
+        if ( p.match( /^[A-Za-z]:/ ) ) {
 			p = p.charAt( 0 ).toLowerCase() + p.slice( 1 );
 		}
-		return p;
+
+        return p;
 	}
 
-	function getRelativePath( absPath: string, rootPath: string ) : string {
+
+    function getRelativePath( absPath: string, rootPath: string ) : string {
 		const abs  = normalizePath( absPath );
 		const root = normalizePath( rootPath );
 
@@ -194,10 +214,10 @@
 			return '.';
 		}
 
-		if ( abs.startsWith( root ) ) {
+		if ( abs.startsWith( root )) {
 			let rel = abs.substring( root.length );
 
-			if ( rel.startsWith( '/' ) ) {
+			if ( rel.startsWith( '/' )) {
 				rel = rel.substring( 1 );
 			}
 
@@ -209,7 +229,13 @@
 
 	// Dynamic list of all available scripts (regular project scripts + custom instances)
 	let availableScripts = $derived.by( () => {
-		const list: { id: string; name: string; script_name: string; path: string; isCustom: boolean }[] = [];
+		const list: {
+            id          : string;
+            name        : string;
+            script_name : string;
+            path        : string;
+            isCustom    : boolean
+        }[] = [];
 
 		if ( !project || !project.instances ) {
 			return list;
@@ -220,19 +246,21 @@
 		// Project instances
 		for ( const inst of project.instances ) {
 			if ( !inst ) continue;
-			list.push( {
+
+            list.push( {
 				id          : inst.id,
 				name        : `${ inst.name } (${ normalizePath( inst.path ) })`,
 				script_name : inst.name,
 				path        : getRelativePath( inst.path, rootPath ),
 				isCustom    : false,
-			} );
+			});
 		}
 
 		// Custom instances in workflow
 		for ( const ci of customInstances ) {
 			if ( !ci ) continue;
-			const absPath   = joinPaths( rootPath, ci.path );
+
+            const absPath   = joinPaths( rootPath, ci.path );
 			const id        = `${ absPath }#${ ci.script_name }`;
 
             list.push( {
@@ -241,32 +269,39 @@
 				script_name : ci.script_name,
 				path        : ci.path,
 				isCustom    : true,
-			} );
+			});
 		}
 
 		return list;
-	} );
+	});
 
 	let hasActiveWorkflowProcesses = $derived.by( () => {
 		if ( !steps || steps.length === 0 || !project || !project.instances ) return false;
-		const rootPath = project.paths && project.paths[ 0 ] ? project.paths[ 0 ] : '';
+
+        const rootPath = project.paths && project.paths[ 0 ] ? project.paths[ 0 ] : '';
 
 		function normPath( path: string ) : string {
 			if ( !path ) return '';
-			let p = path.replace( /\\/g, '/' );
-			if ( p.match( /^[A-Za-z]:/ ) ) {
+
+            let p = path.replace( /\\/g, '/' );
+
+            if ( p.match( /^[A-Za-z]:/ ) ) {
 				p = p.charAt( 0 ).toLowerCase() + p.slice( 1 );
 			}
-			return p;
+
+            return p;
 		}
 
 		function normInstId( id: string ) : string {
 			if ( !id ) return '';
-			const parts = id.split( '#' );
-			if ( parts.length === 2 ) {
+
+            const parts = id.split( '#' );
+
+            if ( parts.length === 2 ) {
 				return `${ normPath( parts[ 0 ] ) }#${ parts[ 1 ] }`;
 			}
-			return normPath( id );
+
+            return normPath( id );
 		}
 
 		return steps.some( ( step ) => {
@@ -281,7 +316,8 @@
 
 			if ( inst ) {
 				const normId = normInstId( inst.id );
-				if ( runningStatuses[ normId ] ) {
+
+                if ( runningStatuses[ normId ] ) {
 					return true;
 				}
 			}
@@ -291,10 +327,12 @@
 				const ci = customInstances.find( ( c ) => {
 					return c.script_name === step.script_name && c.path === relStepPath;
 				} );
-				if ( ci ) {
+
+                if ( ci ) {
 					const absPath = joinPaths( rootPath, ci.path );
 					const customId = normInstId( `${ absPath }#${ ci.script_name }` );
-					if ( runningStatuses[ customId ] ) {
+
+                    if ( runningStatuses[ customId ] ) {
 						return true;
 					}
 				}
@@ -302,7 +340,8 @@
 
 			// Fallback suffix match
 			const suffix = `#${ step.script_name }`;
-			return Object.entries( runningStatuses ).some( ( [ id, isRunning ] ) => id.endsWith( suffix ) && isRunning );
+
+            return Object.entries( runningStatuses ).some( ( [ id, isRunning ] ) => id.endsWith( suffix ) && isRunning );
 		} );
 	} );
 
@@ -350,7 +389,7 @@
 	// Prepare current workflow object to save
 	function buildWorkflowObject() : Workflow {
 		const cleanSteps = steps.map( ( step, idx ) => {
-			const envList   = stepEnvLists[ idx ] || [];
+			const envList = stepEnvLists[ idx ] || [];
 			const envRecord : Record<string, string> = {};
 
             envList.forEach(( p ) => {
@@ -367,7 +406,7 @@
 				background_delay : step.background_delay !== undefined ? step.background_delay : 0,
 				env              : Object.keys( envRecord ).length > 0 ? envRecord : null,
 			};
-		} );
+		});
 
 		return {
 			name      : workflowName,
@@ -428,9 +467,9 @@
 			const wf = buildWorkflowObject();
 
             isWorkflowRunning   = true;
-			stepStatuses        = steps.map( ( () => 'pending' ) );
+			stepStatuses        = steps.map( ( () => 'pending' ));
 
-            await invoke( 'run_workflow', { projectId : project.id, workflow : wf } );
+            await invoke( 'run_workflow', { projectId : project.id, workflow : wf });
 
             showToast( 'Iniciando workflow...', 'success' );
 		} catch ( err ) {
@@ -444,7 +483,7 @@
 		try {
 			const wf = buildWorkflowObject();
 
-            await invoke( 'abort_workflow', { projectId : project.id, workflow : wf } );
+            await invoke( 'abort_workflow', { projectId : project.id, workflow : wf });
 
             showToast( 'Enviando señal de parada...', 'info' );
 		} catch ( err ) {
@@ -478,21 +517,21 @@
 		stepStatuses = stepStatuses.filter( ( _, i ) => i !== idx );
 
 		// Re-align env list records
-		const newEnvLists: Record<number, EnvPair[]> = {};
-		const newEnvTexts: Record<number, string> = {};
-		const newEnvTabs: Record<number, 'form' | 'text'> = {};
+		const newEnvLists   : Record<number, EnvPair[]>         = {};
+		const newEnvTexts   : Record<number, string>            = {};
+		const newEnvTabs    : Record<number, 'form' | 'text'>   = {};
 
 		steps.forEach( ( _, i ) => {
 			const oldIdx = i >= idx ? i + 1 : i;
 
-            newEnvLists[ i ]    = stepEnvLists[ oldIdx ]        || [ { key : '', value : '' } ];
+            newEnvLists[ i ]    = stepEnvLists[ oldIdx ]    || [ { key : '', value : '' } ];
 			newEnvTexts[ i ]    = stepEnvTexts[ oldIdx ]    || '';
 			newEnvTabs[ i ]     = activeEnvTabs[ oldIdx ]   || 'form';
-		} );
+		});
 
-		stepEnvLists = newEnvLists;
-		stepEnvTexts = newEnvTexts;
-		activeEnvTabs = newEnvTabs;
+		stepEnvLists    = newEnvLists;
+		stepEnvTexts    = newEnvTexts;
+		activeEnvTabs   = newEnvTabs;
 
 		if ( expandedStepIndex === idx ) {
 			expandedStepIndex = null;
@@ -504,29 +543,35 @@
 	// Reorder steps
 	function moveStepUp( idx: number ) : void {
 		if ( idx === 0 ) return;
-		const temp = steps[ idx ];
-		steps[ idx ] = steps[ idx - 1 ];
-		steps[ idx - 1 ] = temp;
+
+        const temp = steps[ idx ];
+
+        steps[ idx ]        = steps[ idx - 1 ];
+		steps[ idx - 1 ]    = temp;
 
 		const tempStatus = stepStatuses[ idx ];
-		stepStatuses[ idx ] = stepStatuses[ idx - 1 ];
+
+        stepStatuses[ idx ]     = stepStatuses[ idx - 1 ];
 		stepStatuses[ idx - 1 ] = tempStatus;
 
 		// Swap env listings
 		const list1 = stepEnvLists[ idx ];
 		const list2 = stepEnvLists[ idx - 1 ];
-		stepEnvLists[ idx ] = list2;
+
+        stepEnvLists[ idx ]     = list2;
 		stepEnvLists[ idx - 1 ] = list1;
 
 		const text1 = stepEnvTexts[ idx ];
 		const text2 = stepEnvTexts[ idx - 1 ];
-		stepEnvTexts[ idx ] = text2;
+
+        stepEnvTexts[ idx ]     = text2;
 		stepEnvTexts[ idx - 1 ] = text1;
 
 		const tab1 = activeEnvTabs[ idx ];
 		const tab2 = activeEnvTabs[ idx - 1 ];
-		activeEnvTabs[ idx ] = tab2;
-		activeEnvTabs[ idx - 1 ] = tab1;
+
+        activeEnvTabs[ idx ]        = tab2;
+		activeEnvTabs[ idx - 1 ]    = tab1;
 
 		if ( expandedStepIndex === idx ) {
 			expandedStepIndex = idx - 1;
@@ -537,13 +582,15 @@
 
 	function moveStepDown( idx: number ) : void {
 		if ( idx === steps.length - 1 ) return;
-		moveStepUp( idx + 1 );
+
+        moveStepUp( idx + 1 );
 	}
 
 	// Dropdown Selection Change
 	function handleScriptSelect( idx: number, scriptId: string ) : void {
 		const found = ( availableScripts || [] ).find( ( s ) => s.id === scriptId );
-		if ( found ) {
+
+        if ( found ) {
 			steps[ idx ].script_name = found.script_name;
 			steps[ idx ].path = found.path;
 			steps[ idx ].name = `Ejecutar ${ found.script_name } en ${ found.path }`;
@@ -553,9 +600,11 @@
 	// Env Form input changes & enter key handling
 	function handleEnvPairChange( stepIdx: number, pairIdx: number ) : void {
 		const list = stepEnvLists[ stepIdx ];
-		if ( pairIdx === list.length - 1 ) {
+
+        if ( pairIdx === list.length - 1 ) {
 			const item = list[ pairIdx ];
-			if ( item.key.trim() || item.value.trim() ) {
+
+            if ( item.key.trim() || item.value.trim() ) {
 				// Append new empty row
 				list.push( { key : '', value : '' } );
 			}
@@ -573,16 +622,18 @@
 			// Focus the newly added input on next tick
 			setTimeout( ( () => {
 				const inputs = document.querySelectorAll( `.step-${ stepIdx }-env-key` ) as NodeListOf<HTMLInputElement>;
-				if ( inputs.length > pairIdx + 1 ) {
+
+                if ( inputs.length > pairIdx + 1 ) {
 					inputs[ pairIdx + 1 ].focus();
 				}
-			} ), 30 );
+			}), 30 );
 		}
 	}
 
 	function deleteEnvPair( stepIdx: number, pairIdx: number ) : void {
 		const list = stepEnvLists[ stepIdx ];
-		if ( list.length > 1 ) {
+
+        if ( list.length > 1 ) {
 			stepEnvLists[ stepIdx ] = list.filter( ( _, i ) => i !== pairIdx );
 		}
 	}
@@ -601,14 +652,15 @@
 			const text = stepEnvTexts[ stepIdx ] || '';
 			const parsed = text.split( '\n' ).map( ( line ) => {
 				const eqIdx = line.indexOf( '=' );
-				if ( eqIdx !== -1 ) {
+
+                if ( eqIdx !== -1 ) {
 					return {
 						key   : line.substring( 0, eqIdx ).trim(),
 						value : line.substring( eqIdx + 1 ).trim(),
 					};
 				}
 				return { key : line.trim(), value : '' };
-			} ).filter( ( p ) => p.key );
+			}).filter(( p ) => p.key );
 
 			parsed.push( { key : '', value : '' } );
 			stepEnvLists[ stepIdx ] = parsed;
@@ -616,31 +668,33 @@
 	}
 
 	// Custom Instances (Manual scripts in YAML)
-	let newCustomName        = $state( '' );
-	let newCustomPath        = $state( '' );
-	let newCustomScript      = $state( '' );
-	let newCustomCommand     = $state( '' );
-	let isAddingCustom       = $state( false );
+	let newCustomName       = $state( '' );
+	let newCustomPath       = $state( '' );
+	let newCustomScript     = $state( '' );
+	let newCustomCommand    = $state( '' );
+	let isAddingCustom      = $state( false );
 
 	function addCustomInstance() : void {
 		if ( !newCustomName.trim() || !newCustomPath.trim() || !newCustomScript.trim() || !newCustomCommand.trim() ) {
 			showToast( 'Por favor rellene todos los campos del script personalizado.', 'error' );
-			return;
+
+            return;
 		}
 
-		customInstances.push( {
+		customInstances.push({
 			name        : newCustomName.trim(),
 			path        : newCustomPath.trim().replace( /\\/g, '/' ),
 			script_name : newCustomScript.trim(),
 			command     : newCustomCommand.trim(),
-		} );
+		});
 
 		newCustomName    = '';
 		newCustomPath    = '';
 		newCustomScript  = '';
 		newCustomCommand = '';
 		isAddingCustom   = false;
-		showToast( 'Script personalizado agregado al ecosistema.', 'success' );
+
+        showToast( 'Script personalizado agregado al ecosistema.', 'success' );
 	}
 
 	function deleteCustomInstance( idx: number ) : void {
@@ -648,6 +702,8 @@
 		showToast( 'Script personalizado eliminado.', 'info' );
 	}
 </script>
+
+<svelte:window bind:innerWidth={ windowWidth } />
 
 <div class="space-y-6">
 	<!-- Top action bar -->
@@ -707,14 +763,15 @@
 
 	<!-- Custom YAML-only instances definition -->
 	<div class="bg-slate-900/40 p-5 rounded-2xl border border-slate-800/80 space-y-4">
-		<div class="flex items-center justify-between">
+		<div class="flex items-center justify-between gap-2">
 			<div>
 				<h4 class="text-sm font-bold text-white">Comandos Personalizados (YAML)</h4>
 				<p class="text-[11px] text-slate-500">Scripts adicionales portables declarados únicamente en el flujo.</p>
 			</div>
-			<button
+
+            <button
 				onclick={ ( () => isAddingCustom = !isAddingCustom ) }
-				class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-bold border border-slate-700/50 transition-all flex items-center gap-1"
+				class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-bold border border-slate-700/50 transition-all flex items-center gap-0"
 			>
 				<Plus class="w-3.5 h-3.5" />
 				Agregar Comando
@@ -792,43 +849,56 @@
 						class="bg-slate-900 border { activeStepIndex === idx ? 'border-violet-500 ring-1 ring-violet-500/20 shadow-lg shadow-violet-500/5' : 'border-slate-800/80 hover:border-slate-700' } rounded-2xl transition-all duration-200"
 					>
 						<!-- Step Header Bar -->
-						<div class="p-4 flex items-center justify-between gap-4 select-none">
-							<div class="flex items-center gap-3 min-w-0">
-								<!-- Execution Status Icon -->
-								<div class="shrink-0">
-									{#if stepStatuses[ idx ] === 'running'}
-										<div class="w-6 h-6 rounded-full bg-violet-500/20 border border-violet-500 flex items-center justify-center">
-											<Loader2 class="w-3.5 h-3.5 text-violet-400 animate-spin" />
-										</div>
-									{:else if stepStatuses[ idx ] === 'success'}
-										<div class="w-6 h-6 rounded-full bg-emerald-500/15 flex items-center justify-center">
-											<CheckCircle2 class="w-4 h-4 text-emerald-400" />
-										</div>
-									{:else if stepStatuses[ idx ] === 'failed'}
-										<div class="w-6 h-6 rounded-full bg-red-500/15 flex items-center justify-center">
-											<XCircle class="w-4 h-4 text-red-400" />
-										</div>
-									{:else}
-										<div class="w-6 h-6 rounded-full bg-slate-950 border border-slate-800 flex items-center justify-center text-[10px] font-bold text-slate-500">
-											{ idx + 1 }
-										</div>
-									{/if}
+						<div class="p-4 flex flex-wrap { ( isLgViewport && !forceMd ) ? 'lg:flex-nowrap' : '' } items-center justify-between gap-4 select-none">
+							<div class="flex items-center justify-between { ( isLgViewport && !forceMd ) ? 'lg:justify-start lg:w-auto' : '' } gap-3 w-full flex-1 min-w-[200px]">
+								<div class="flex items-center gap-3 min-w-0 flex-1">
+									<!-- Execution Status Icon -->
+									<div class="shrink-0">
+										{#if stepStatuses[ idx ] === 'running'}
+											<div class="w-6 h-6 rounded-full bg-violet-500/20 border border-violet-500 flex items-center justify-center">
+												<Loader2 class="w-3.5 h-3.5 text-violet-400 animate-spin" />
+											</div>
+										{:else if stepStatuses[ idx ] === 'success'}
+											<div class="w-6 h-6 rounded-full bg-emerald-500/15 flex items-center justify-center">
+												<CheckCircle2 class="w-4 h-4 text-emerald-400" />
+											</div>
+										{:else if stepStatuses[ idx ] === 'failed'}
+											<div class="w-6 h-6 rounded-full bg-red-500/15 flex items-center justify-center">
+												<XCircle class="w-4 h-4 text-red-400" />
+											</div>
+										{:else}
+											<div class="w-6 h-6 rounded-full bg-slate-950 border border-slate-800 flex items-center justify-center text-[10px] font-bold text-slate-500">
+												{ idx + 1 }
+											</div>
+										{/if}
+									</div>
+
+									<div class="min-w-0 flex-1">
+										<input
+											type="text"
+											bind:value={ step.name }
+											class="bg-transparent border-0 font-bold text-slate-200 text-sm focus:outline-none focus:bg-slate-950/80 px-2 py-0.5 rounded-lg border-b border-transparent focus:border-slate-800 w-full truncate"
+											placeholder="Nombre del paso"
+										/>
+									</div>
 								</div>
 
-								<div class="min-w-0">
-									<input
-										type="text"
-										bind:value={ step.name }
-										class="bg-transparent border-0 font-bold text-slate-200 text-sm focus:outline-none focus:bg-slate-950/80 px-2 py-0.5 rounded-lg border-b border-transparent focus:border-slate-800 w-full max-w-[260px] truncate"
-										placeholder="Nombre del paso"
-									/>
-								</div>
+								<!-- Delete button for MD breakpoint ONLY (>= md and < lg) -->
+								{#if showTitleDeleteButton}
+									<button
+										onclick={ ( () => removeStep( idx ) ) }
+										class="flex p-2 text-slate-500 hover:text-red-400 rounded-xl hover:bg-slate-800 transition-all shrink-0"
+										title="Eliminar paso"
+									>
+										<Trash2 class="w-4 h-4" />
+									</button>
+								{/if}
 							</div>
 
 							<!-- Controls -->
-							<div class="flex items-center gap-2 shrink-0">
+							<div class="flex flex-col md:flex-row items-stretch md:items-center gap-3 w-full { ( isLgViewport && !forceMd ) ? 'lg:w-auto' : '' } min-w-0">
 								<!-- Dropdown Selector of existing scripts -->
-								<div class="w-full max-w-[200px]">
+								<div class="w-full md:w-[200px] shrink-0">
 									<SoftSelect
 										options={ availableScripts }
 										value={ ( availableScripts || [] ).find( ( s ) => s.script_name === step.script_name && s.path === step.path )?.id || '' }
@@ -837,46 +907,61 @@
 									/>
 								</div>
 
-								<!-- Checkbox fail on error -->
-								<div class="flex items-center gap-2 bg-slate-950/40 border border-slate-800/80 px-3 py-1.5 rounded-xl hover:bg-slate-950/60 transition-colors">
-									<Switch bind:checked={ step.fail_on_error } showLabelText={ false } />
-									<span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider hidden sm:inline select-none whitespace-nowrap">Detener si falla</span>
-								</div>
+								<!-- Inputs & Buttons Row Container -->
+								<div class="flex flex-col sm:flex-row sm:flex-nowrap items-stretch sm:items-center gap-3 w-full md:w-auto shrink-0">
+									<!-- Checkbox fail on error & background delay wrapper -->
+									<div class="flex flex-row flex-nowrap items-center gap-2 w-full sm:w-auto shrink-0">
+										<div class="flex items-center gap-2 bg-slate-950/40 border border-slate-800/80 px-3 py-1.5 rounded-xl hover:bg-slate-950/60 transition-colors w-full sm:w-auto justify-between sm:justify-start">
+											<Switch bind:checked={ step.fail_on_error } showLabelText={ false } />
+											<span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider select-none whitespace-nowrap">Detener si falla</span>
+										</div>
 
-								<!-- Number input for background delay (only shown if not the last step) -->
-								{#if ( idx < steps.length - 1 ) }
-									<div class="flex items-center gap-2">
-										<span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider select-none whitespace-nowrap">Espera (s):</span>
-										<InputNumber
-											bind:value={ step.background_delay }
-											min={ 0 }
-											max={ 300 }
-											width="w-10"
-										/>
+										<!-- Number input for background delay (only shown if not the last step) -->
+										{#if ( idx < steps.length - 1 ) }
+											<div class="flex items-center gap-2 bg-slate-950/40 border border-slate-800/80 pl-3 pr-1 py-1 rounded-xl w-full sm:w-auto justify-between sm:justify-start">
+												<span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider select-none whitespace-nowrap">Espera (s):</span>
+												<InputNumber
+													bind:value={ step.background_delay }
+													min={ 0 }
+													max={ 300 }
+													width="w-10"
+												/>
+											</div>
+										{/if}
 									</div>
-								{/if}
 
-								<!-- Settings/Env variables button -->
-								<button
-									onclick={ ( () => expandedStepIndex = expandedStepIndex === idx ? null : idx ) }
-									class="p-2 text-slate-400 hover:text-violet-400 hover:bg-slate-800 rounded-xl transition-all"
-									title="Configurar Variables de Entorno"
-								>
-									<Settings class="w-4 h-4 { expandedStepIndex === idx ? 'text-violet-400 rotate-45' : '' } transition-transform duration-200" />
-								</button>
+									<!-- Settings/Env variables button & action buttons wrapper -->
+									<div class="flex items-center justify-between sm:justify-start gap-2 w-full sm:w-auto shrink-0">
+										<div class="flex items-center gap-1">
+											<button
+												onclick={ ( () => expandedStepIndex = expandedStepIndex === idx ? null : idx ) }
+												class="p-2 text-slate-400 hover:text-violet-400 hover:bg-slate-800 rounded-xl transition-all"
+												title="Configurar Variables de Entorno"
+											>
+												<Settings class="w-4 h-4 { expandedStepIndex === idx ? 'text-violet-400 rotate-45' : '' } transition-transform duration-200" />
+											</button>
 
-								<!-- Order arrows -->
-								<button onclick={ ( () => moveStepUp( idx ) ) } disabled={ idx === 0 } class="p-1.5 text-slate-500 hover:text-slate-200 disabled:opacity-30 rounded hover:bg-slate-800">
-									<ArrowUp class="w-3.5 h-3.5" />
-								</button>
-								<button onclick={ ( () => moveStepDown( idx ) ) } disabled={ idx === steps.length - 1 } class="p-1.5 text-slate-500 hover:text-slate-200 disabled:opacity-30 rounded hover:bg-slate-800">
-									<ArrowDown class="w-3.5 h-3.5" />
-								</button>
+											<!-- Order arrows -->
+											<button onclick={ ( () => moveStepUp( idx ) ) } disabled={ idx === 0 } class="p-1.5 text-slate-500 hover:text-slate-200 disabled:opacity-30 rounded hover:bg-slate-800">
+												<ArrowUp class="w-3.5 h-3.5" />
+											</button>
+											<button onclick={ ( () => moveStepDown( idx ) ) } disabled={ idx === steps.length - 1 } class="p-1.5 text-slate-500 hover:text-slate-200 disabled:opacity-30 rounded hover:bg-slate-800">
+												<ArrowDown class="w-3.5 h-3.5" />
+											</button>
+										</div>
 
-								<!-- Delete button -->
-								<button onclick={ ( () => removeStep( idx ) ) } class="p-2 text-slate-500 hover:text-red-400 rounded-xl hover:bg-slate-800 transition-all">
-									<Trash2 class="w-4 h-4" />
-								</button>
+										<!-- Delete button -->
+										{#if showControlsDeleteButton}
+											<button
+												onclick={ ( () => removeStep( idx ) ) }
+												class="p-2 text-slate-500 hover:text-red-400 rounded-xl hover:bg-slate-800 transition-all"
+												title="Eliminar paso"
+											>
+												<Trash2 class="w-4 h-4" />
+											</button>
+										{/if}
+									</div>
+								</div>
 							</div>
 						</div>
 

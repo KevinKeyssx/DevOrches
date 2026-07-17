@@ -118,6 +118,7 @@ pub fn run() {
 			commands::project::start_instance,
 			commands::project::stop_instance,
 			commands::project::update_instance,
+			commands::project::update_project_name,
 			commands::project::add_manual_instance,
 			commands::project::load_workflow,
 			commands::project::save_workflow,

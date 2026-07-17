@@ -56,9 +56,12 @@
 	let newProjectName    = $state( '' );
 	let addedPaths        = $state<string[]>( [] );
 	let isAddingProject   = $state( false );
-	let activeTab         = $state<'scripts' | 'workflows'>( 'scripts' );
-	let currentWorkflow   = $state<Workflow | null>( null );
-	let isWorkflowRunning = $state( false );
+	let activeTab            = $state<'scripts' | 'workflows'>( 'scripts' );
+	let currentWorkflow      = $state<Workflow | null>( null );
+	let isWorkflowRunning    = $state( false );
+	let isSidebarCollapsed   = $state( true );
+	let isEditingProjectName = $state( false );
+	let editProjectName      = $state( '' );
 
 	// Process Execution & Log State
 	let instanceLogs        = $state<Record<string, string>>( {} );
@@ -293,6 +296,9 @@
 	}));
 
 
+	let hasInstances : boolean = $derived( Object.values( groupedInstances ).some( ( list ) => list.length > 0 ) );
+
+
 
 
 
@@ -361,8 +367,9 @@
 
 
     async function selectProject( project: Project ): Promise<void> {
-		selectedProject = project;
-		activeTab       = 'scripts';
+		selectedProject      = project;
+		activeTab            = 'scripts';
+		isEditingProjectName = false;
 		try {
 			currentWorkflow = await invoke<Workflow | null>( 'load_workflow', { projectId : project.id } );
 		} catch ( err ) {
@@ -386,6 +393,50 @@
 		} catch ( err ) {
 			showToast( String( err ), 'error' );
 		}
+	}
+
+
+	function startProjectNameEditing() : void {
+		if ( !selectedProject ) return;
+		editProjectName      = selectedProject.name;
+		isEditingProjectName = true;
+	}
+
+
+	function cancelProjectNameEditing() : void {
+		isEditingProjectName = false;
+	}
+
+
+	async function saveProjectNameEditing() : Promise<void> {
+		if ( !selectedProject || !editProjectName.trim() ) return;
+
+		if ( editProjectName.trim() === selectedProject.name ) {
+			isEditingProjectName = false;
+			return;
+		}
+
+		try {
+			await invoke( 'update_project_name', {
+				projectId : selectedProject.id,
+				newName   : editProjectName.trim(),
+			});
+
+			selectedProject.name = editProjectName.trim();
+			selectedProject      = { ...selectedProject };
+			projects             = projects.map( ( p ) => p.id === selectedProject!.id ? selectedProject! : p );
+
+			showToast( 'Nombre del proyecto actualizado exitosamente.', 'success' );
+		} catch ( err ) {
+			showToast( String( err ), 'error' );
+		} finally {
+			isEditingProjectName = false;
+		}
+	}
+
+
+	function autofocus( node: HTMLInputElement ) : void {
+		node.focus();
 	}
 
 
@@ -729,16 +780,61 @@
 		onSelectProject={ selectProject }
 		onDeleteProject={ handleDeleteProject }
 		onAddProject={ ( () => isAddingProject = true ) }
+		bind:isCollapsed={ isSidebarCollapsed }
 	/>
 
 	<!-- Main Panel -->
 	<section class="flex-1 flex flex-col min-w-0 relative">
 		{#if selectedProject}
 			<!-- Project Detail Header -->
-			<header class="p-6 border-b border-slate-800 bg-slate-900/50 backdrop-blur-md flex flex-col gap-3">
+			<header class="p-6 pl-16 xl:pl-6 border-b border-slate-800 bg-slate-900/50 backdrop-blur-md flex flex-col gap-3">
 				<div class="flex items-center justify-between">
 					<div class="min-w-0 flex flex-col gap-3">
-						<h2 class="text-2xl font-bold text-white tracking-tight">{ selectedProject.name }</h2>
+						{#if isEditingProjectName}
+							<div class="flex items-center gap-1.5 w-full">
+								<input
+									use:autofocus
+									type="text"
+									bind:value={ editProjectName }
+									onkeydown={ ( ( e ) => { if ( e.key === 'Enter' ) { saveProjectNameEditing(); } if ( e.key === 'Escape' ) { cancelProjectNameEditing(); } } ) }
+									class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1 text-2xl font-bold text-slate-200 focus:outline-none focus:border-violet-500/50 transition-colors w-full max-w-[400px]"
+									placeholder="Nombre del Proyecto"
+								/>
+
+								<button
+									onclick={ saveProjectNameEditing }
+									class="p-1.5 rounded-lg text-emerald-400 hover:text-emerald-300 hover:bg-slate-800 transition-all shrink-0 cursor-pointer"
+									title="Guardar nombre"
+								>
+									<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+									</svg>
+								</button>
+
+								<button
+									onclick={ cancelProjectNameEditing }
+									class="p-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-slate-800 transition-all shrink-0 cursor-pointer"
+									title="Cancelar"
+								>
+									<svg xmlns="http://www.w3.org/2000/svg" class="w-5.5 h-5.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+									</svg>
+								</button>
+							</div>
+						{:else}
+							<div class="flex items-center gap-2">
+								<h2 class="text-2xl font-bold text-white tracking-tight">{ selectedProject.name }</h2>
+								<button
+									onclick={ startProjectNameEditing }
+									class="p-1 rounded-md text-slate-500 hover:text-violet-400 hover:bg-slate-800/80 transition-all cursor-pointer flex items-center justify-center"
+									title="Editar nombre del proyecto"
+								>
+									<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+									</svg>
+								</button>
+							</div>
+						{/if}
 					</div>
 
                     <div class="flex items-center gap-3">
@@ -926,7 +1022,7 @@
 							</div>
 						{/each}
 
-						{#if ( ( ( selectedProject?.instances ) || [] ).length === 0 && ( !currentWorkflow || !Array.isArray( currentWorkflow?.instances ) || ( currentWorkflow?.instances || [] ).length === 0 ) ) }
+						{#if !hasInstances}
 							<div class="bg-slate-900 border border-dashed border-slate-800 rounded-2xl p-8 text-center select-none">
 								<p class="text-sm text-slate-500 font-medium">No hay instancias registradas en este proyecto.</p>
 							</div>
@@ -943,6 +1039,7 @@
 							{ showToast }
 							bind:currentWorkflow
 							bind:isWorkflowRunning
+							isSidebarCollapsed={ isSidebarCollapsed }
 						/>
 					</div>
 				{/if}

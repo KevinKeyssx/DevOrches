@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Project } from '../lib/types';
+	import ConfirmDialog from './shared/ConfirmDialog.svelte';
 
 	interface Props {
 		projects        : Project[];
@@ -7,40 +8,92 @@
 		onSelectProject : ( project: Project ) => void;
 		onDeleteProject : ( id: string ) => Promise<void>;
 		onAddProject    : () => void;
+		isCollapsed?    : boolean;
 	}
 
 
-    let {
+	let {
 		projects,
 		selectedProject,
 		onSelectProject,
 		onDeleteProject,
-		onAddProject
+		onAddProject,
+		isCollapsed = $bindable( true )
 	}: Props = $props();
 
 
-    let isCollapsed = $state( false );
+	let isConfirmOpen       : boolean = $state( false );
+	let projectToDeleteId   : string  = $state( '' );
+	let projectToDeleteName : string  = $state( '' );
+
+	let confirmDescription : string = $derived( '¿Estás seguro de que deseas eliminar el proyecto "' + projectToDeleteName + '"? Esta acción no se puede deshacer.' );
 
 
-    function getInitials( name: string ): string {
+	$effect( () => {
+		if ( window.innerWidth >= 1280 ) {
+			isCollapsed = false;
+		}
+	});
+
+
+	function getInitials( name: string ): string {
 		if ( !name ) return '';
 
-        const parts = name.split( ' ' ).filter(( p ) => p.length > 0 );
+		const parts = name.split( ' ' ).filter(( p ) => p.length > 0 );
 
-        if ( parts.length >= 2 ) {
+		if ( parts.length >= 2 ) {
 			return ( parts[ 0 ][ 0 ] + parts[ 1 ][ 0 ] ).toUpperCase();
 		}
 
-        return name.slice( 0, 2 ).toUpperCase();
+		return name.slice( 0, 2 ).toUpperCase();
+	}
+
+
+	function confirmDeleteProject( id: string, name: string ) : void {
+		projectToDeleteId   = id;
+		projectToDeleteName = name;
+		isConfirmOpen       = true;
+	}
+
+
+	async function handleConfirmDelete() : Promise<void> {
+		if ( projectToDeleteId ) {
+			await onDeleteProject( projectToDeleteId );
+			projectToDeleteId   = '';
+			projectToDeleteName = '';
+		}
 	}
 </script>
 
 
-<aside class="relative bg-slate-900 border-r border-slate-800 flex flex-col justify-between select-none transition-all duration-300 ease-in-out { isCollapsed ? 'w-20' : 'w-80' }">
+{#if !isCollapsed}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+	<div
+		onclick={ ( () => isCollapsed = true ) }
+		class="fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-xs xl:hidden cursor-pointer"
+		role="presentation"
+	></div>
+{/if}
+
+{#if isCollapsed}
+	<button
+		onclick={ ( () => isCollapsed = false ) }
+		class="fixed left-4 top-5 z-40 xl:hidden w-10 h-10 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white shadow-lg hover:bg-slate-800 active:scale-95 transition-all cursor-pointer flex items-center justify-center"
+		title="Abrir Menú"
+		aria-label="Abrir Menú"
+	>
+		<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+		</svg>
+	</button>
+{/if}
+
+<aside class="fixed xl:relative left-0 top-0 h-full z-50 bg-slate-900 border-r border-slate-800 flex flex-col justify-between select-none transition-all duration-300 ease-in-out shadow-2xl xl:shadow-none { isCollapsed ? 'w-80 xl:w-20 -translate-x-full xl:translate-x-0' : 'w-80 translate-x-0' }">
 	<!-- Collapse Button (Floating on the right border) -->
 	<button
 		onclick={ ( () => isCollapsed = !isCollapsed ) }
-		class="absolute -right-3 top-6 z-40 w-6 h-6 rounded-full bg-slate-800 border border-slate-700 text-slate-400 hover:text-white flex items-center justify-center shadow-lg transition-all duration-300 hover:scale-110 cursor-pointer"
+		class="absolute -right-3 top-6 z-40 w-6 h-6 rounded-full bg-slate-800 border border-slate-700 text-slate-400 hover:text-white hidden xl:flex items-center justify-center shadow-lg transition-all duration-300 hover:scale-110 cursor-pointer"
 		title={ isCollapsed ? 'Expandir Sidebar' : 'Colapsar Sidebar' }
 		aria-label={ isCollapsed ? 'Expandir Sidebar' : 'Colapsar Sidebar' }
 	>
@@ -111,7 +164,7 @@
 						</div>
 
                         <button
-							onclick={ ( ( e ) => { e.stopPropagation(); onDeleteProject( project.id ); } ) }
+							onclick={ ( ( e ) => { e.stopPropagation(); confirmDeleteProject( project.id, project.name ); } ) }
 							class="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-slate-700/80 text-slate-500 hover:text-red-400 transition-all duration-150"
 							aria-label="Eliminar proyecto"
 							title="Eliminar proyecto"
@@ -146,4 +199,14 @@
             <p>Desarrollado por <a href="https://github.com/KevinKeyssx" target="_blank" rel="noopener noreferrer cursor-pointer">KevinKeyssx</a></p>
 		{/if}
 	</footer>
+
+	<ConfirmDialog
+		bind:open={ isConfirmOpen }
+		title       = "¿Eliminar Proyecto?"
+		description = { confirmDescription }
+		confirmText = "Eliminar"
+		cancelText  = "Cancelar"
+		variant     = "danger"
+		onConfirm   = { handleConfirmDelete }
+	/>
 </aside>

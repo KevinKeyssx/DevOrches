@@ -413,6 +413,53 @@ pub async fn update_instance(
 	Ok( () )
 }
 
+
+#[tauri::command]
+pub async fn update_project_name(
+	app        : tauri::AppHandle,
+	state      : State<'_, DbState>,
+	project_id : String,
+	new_name   : String,
+) -> Result<(), String> {
+	if new_name.trim().is_empty() {
+		return Err( "El nombre del proyecto no puede estar vacío".to_string() );
+	}
+
+	let old_name : String;
+	{
+		let mut data_guard = state.data.write()
+			.map_err( | _ | "Error de concurrencia al escribir en la base de datos" )?;
+
+		if data_guard.projects.iter().any( | p | p.name == new_name && p.id != project_id ) {
+			return Err( "Ya existe otro proyecto con ese nombre".to_string() );
+		}
+
+		if let Some( project ) = data_guard.projects.iter_mut().find( | p | p.id == project_id ) {
+			old_name = project.name.clone();
+			project.name = new_name.trim().to_string();
+			project.updated_at = Local::now().to_rfc3339();
+		} else {
+			return Err( "No se encontró el proyecto especificado".to_string() );
+		}
+	}
+
+	state.save()?;
+
+	let app_data = app.path().app_data_dir()
+		.map_err( | e | format!( "No se pudo obtener el directorio de la app: {}", e ) )?;
+	let old_path = app_data.join( "projects" ).join( &old_name );
+	let new_path = app_data.join( "projects" ).join( new_name.trim() );
+
+	if old_path.exists() {
+		if let Some( parent ) = new_path.parent() {
+			let _ = std::fs::create_dir_all( parent );
+		}
+		let _ = std::fs::rename( old_path, new_path );
+	}
+
+	Ok( () )
+}
+
 #[tauri::command]
 pub async fn add_manual_instance(
 	state      : State<'_, DbState>,

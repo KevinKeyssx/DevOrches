@@ -105,14 +105,14 @@
 	<div class="overflow-x-hidden transition-all duration-300 { isCollapsed ? 'px-3 py-6' : 'p-6' }">
 		<!-- Header / Logo -->
 		<header class="flex items-center gap-3 mb-8 { isCollapsed ? 'justify-center' : '' }">
-			<div class="rounded-xl bg-linear-to-tr from-violet-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-violet-500/20 shrink-0 transition-all duration-300 { isCollapsed ? 'w-9 h-9' : 'w-10 h-10' }">
-				<svg xmlns="http://www.w3.org/2000/svg" class="text-white transition-all duration-300 { isCollapsed ? 'w-5 h-5' : 'w-6 h-6' }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-				</svg>
-			</div>
+			<img
+				src="/logo.png"
+				alt="DevOrches Logo"
+				class="rounded-xl object-contain shadow-lg shadow-violet-500/20 shrink-0 transition-all duration-300 { isCollapsed ? 'w-9 h-9' : 'w-10 h-10' }"
+			/>
 
             {#if !isCollapsed}
-				<div class="flex-1 min-w-0 transition-opacity duration-200">
+				<div class="flex-1 min-w-0 transition-opacity duration-200 -space-y-2">
 					<h1 class="font-bold text-lg tracking-wider bg-clip-text text-transparent bg-linear-to-r from-violet-400 to-indigo-300">
 						DevOrches
 					</h1>
@@ -193,10 +193,10 @@
 	<footer class="p-6 border-t border-slate-800 bg-slate-950/40 text-xs text-slate-600 text-center font-medium">
 		{#if isCollapsed}
 			v1.0.0
-            <p>keyssx</p>
+            <p class="text-xs text-purple-700 italic">Keyssx</p>
 		{:else}
-            <p>v1.0.0 • Hecho con Rust y Svelte 5</p>
-            <p>Desarrollado por <a href="https://github.com/KevinKeyssx" target="_blank" rel="noopener noreferrer cursor-pointer">KevinKeyssx</a></p>
+            <p>v1.0.0 • Por y para desarrolladores</p>
+            <p class="text-xs text-purple-700 italic">Desarrollado por <a href="https://github.com/KevinKeyssx" target="_blank" rel="noopener noreferrer cursor-pointer">KevinKeyssx</a></p>
 		{/if}
 	</footer>
 

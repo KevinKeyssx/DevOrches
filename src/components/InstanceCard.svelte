@@ -73,7 +73,7 @@
             return;
         }
 
-        await onUpdateName( instance, editName );
+        await onUpdateName( instance, editName.trim() );
 
         isEditingName = false;
 	}
@@ -98,7 +98,7 @@
             return;
         }
 
-		await onUpdateCommand( instance, editCommand );
+		await onUpdateCommand( instance, editCommand.trim() );
 		isEditingCommand = false;
 	}
 
@@ -138,7 +138,7 @@
 							type="text"
 							bind:value={ editName }
 							onclick={ ( ( e ) => e.stopPropagation() ) }
-							onkeydown={ ( ( e ) => { if ( e.key === 'Enter' ) { saveNameEditing(); } if ( e.key === 'Escape' ) { cancelNameEditing(); } } ) }
+							onkeydown={ ( ( e ) => { e.stopPropagation(); if ( e.key === 'Enter' ) { saveNameEditing(); } if ( e.key === 'Escape' ) { cancelNameEditing(); } } ) }
 							class="w-full max-w-[180px] bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-0.5 text-base font-bold text-slate-200 focus:outline-none focus:border-violet-500/50 transition-colors"
 							placeholder="Nombre"
 						/>
@@ -154,9 +154,9 @@
 						</button>
 
                         <button
-							onclick={ ( ( e ) => { e.stopPropagation(); cancelNameEditing(); } ) }
-							class="p-1 rounded-lg text-red-400 hover:text-red-300 hover:bg-slate-800 transition-all shrink-0"
-							title="Cancelar"
+							onclick = { ( ( e ) => { e.stopPropagation(); cancelNameEditing(); } ) }
+							class   = "p-1 rounded-lg text-red-400 hover:text-red-300 hover:bg-slate-800 transition-all shrink-0"
+							title   = "Cancelar"
 						>
 							<svg xmlns="http://www.w3.org/2000/svg" class="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -171,9 +171,9 @@
 
                     {#if !isRunning && !isWorkflowRunning}
 						<button
-							onclick={ ( ( e ) => { e.stopPropagation(); startNameEditing(); } ) }
-							class="p-1 rounded-md text-slate-500 hover:text-violet-400 hover:bg-slate-800 transition-all"
-							title="Editar nombre del script"
+							onclick = { ( ( e ) => { e.stopPropagation(); startNameEditing(); } ) }
+							class   = "p-1 rounded-md text-slate-500 hover:text-violet-400 hover:bg-slate-800 transition-all"
+							title   = "Editar nombre del script"
 						>
 							<svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -201,7 +201,7 @@
 						type="text"
 						bind:value={ editCommand }
 						onclick={ ( ( e ) => e.stopPropagation() ) }
-						onkeydown={ ( ( e ) => { if ( e.key === 'Enter' ) { saveCommandEditing(); } if ( e.key === 'Escape' ) { cancelCommandEditing(); } } ) }
+						onkeydown={ ( ( e ) => { e.stopPropagation(); if ( e.key === 'Enter' ) { saveCommandEditing(); } if ( e.key === 'Escape' ) { cancelCommandEditing(); } } ) }
 						class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500/40 transition-colors font-mono"
 						placeholder="Comando"
 					/>
